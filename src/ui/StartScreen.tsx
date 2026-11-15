@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Mode } from '../core/types';
 import exterior from '../assets/exterior.jpg';
+import { CertLine, GAME_TITLE } from './CertLine';
 
 const KEYS: [string, string][] = [
   ['1 2 3 4', 'OPEN A CAMERA'],
@@ -36,9 +37,9 @@ export function StartScreen({ onBegin }: { onBegin: (mode: Mode, alias: string |
     <main className="start" style={{ backgroundImage: `url(${exterior})` }}>
       <div className="start-inner">
         <div className="start-head">
-          <p className="place">MORGRIDGE HALL</p>
+          <h1 className="logo">{GAME_TITLE}</h1>
+          <CertLine />
           <p className="night">NIGHT 1</p>
-          <h1 className="logo">NULLSPACE</h1>
           <p className="premise">
             The building locked at 7 PM. You are the overnight student auditor, on shift from 12:00 AM. The building's AI,{' '}
             <span className="ai">C.A.I.-0</span>, keeps offering to help. Something is walking the halls toward your office.

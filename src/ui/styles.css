@@ -10,6 +10,7 @@
   --ai: #a78bfa;      /* violet belongs to C.A.I.-0 and to the eyes in the hall. Nothing else. */
   --warn: #f2b84b;
   --rec: #e5484d;
+  --ok: #5fd38d;      /* only for C.A.I.-0's certificate line */
   --display: 'VT323', 'Courier New', monospace;
   --body: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
   --serif: 'Instrument Serif', Georgia, 'Times New Roman', serif;
@@ -73,7 +74,7 @@ kbd {
 .start-inner { position: relative; max-width: 1040px; display: grid; gap: 26px; }
 .start-head { display: grid; gap: 4px; }
 .place { font-family: var(--display); font-size: 26px; letter-spacing: 3px; color: var(--ink); line-height: 1; }
-.night { font-family: var(--display); font-size: 20px; letter-spacing: 3px; color: var(--dim); line-height: 1; margin-bottom: 10px; }
+.night { font-family: var(--display); font-size: 20px; letter-spacing: 3px; color: var(--dim); line-height: 1; margin-top: 6px; }
 .start-head .premise { margin-top: 14px; }
 .tutorial ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
 .tutorial li { display: grid; grid-template-columns: 30px 1fr; gap: 12px; align-items: start; }
@@ -84,7 +85,7 @@ kbd {
 .eyebrow { font-family: var(--display); font-size: 20px; letter-spacing: 1.5px; color: var(--dim); }
 .logo {
   margin: 0; font-family: var(--display); font-weight: 400;
-  font-size: clamp(56px, 11vw, 104px); line-height: .82; letter-spacing: 4px;
+  font-size: clamp(40px, 7.4vw, 84px); line-height: .86; letter-spacing: 3px;
   text-shadow: 3px 0 rgba(167,139,250,.55), -3px 0 rgba(214,220,225,.25);
 }
 .premise { max-width: 62ch; }
@@ -116,7 +117,7 @@ kbd {
   padding: 6px 16px; border-bottom: 1px solid var(--line);
   font-family: var(--display); font-size: 22px; letter-spacing: 1px; color: var(--dim);
 }
-.hud-logo { color: var(--ink); letter-spacing: 3px; }
+.hud-logo { color: var(--ink); letter-spacing: 2px; }
 .hud-clock { color: var(--ink); font-size: 28px; min-width: 92px; font-variant-numeric: tabular-nums; }
 .power { display: flex; align-items: center; gap: 8px; color: var(--ink); margin-left: auto; }
 .power i { display: block; width: 120px; height: 10px; border: 1px solid var(--dim); }
@@ -322,3 +323,15 @@ kbd {
 .manual dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; font-size: 16px; line-height: 1.4; }
 .manual dt { font-weight: 600; }
 .manual dd { margin: 0; }
+
+/* C.A.I.-0's certificate line */
+.cert { display: grid; gap: 2px; margin-top: 8px; }
+.cert-line { font-family: var(--display); font-size: 24px; letter-spacing: 2px; line-height: 1.1; color: var(--ok); }
+.cert-n { display: inline-block; min-width: .6em; text-align: center; font-variant-numeric: tabular-nums; }
+.cert-n.glitching { color: var(--ink); text-shadow: 2px 0 var(--rec), -2px 0 var(--ok); }
+.cert.broken .cert-line { color: var(--ink); }
+.cert.broken .cert-word { text-decoration: line-through; text-decoration-color: var(--rec); text-decoration-thickness: 2px; color: var(--dim); }
+.cert.broken .cert-n { color: var(--rec); }
+.cert-note { font-size: 13px; color: var(--rec); }
+.mirror-title { display: grid; gap: 0; }
+.logo.small { font-size: clamp(30px, 5vw, 46px); line-height: .9; }

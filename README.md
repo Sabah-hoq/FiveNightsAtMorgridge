@@ -1,4 +1,4 @@
-# NullSpace: A Night at Morgridge (frontend demo)
+# Five Nights at Morgridge (working name during the build: NullSpace)
 
 Playable Floors 1-2 demo built from `nullspace_build_spec_v2.md`. Runs fully offline.
 

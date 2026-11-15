@@ -12,6 +12,7 @@ import { logEvent, type RunStart } from '../services/api';
 import blackImg from '../assets/sentinel.jpg';
 import whiteImg from '../assets/sentinel-white.jpg';
 import { CameraGrid, CAMS } from './CameraGrid';
+import { GAME_TITLE } from './CertLine';
 import { sfx, toggleMute } from './sfx';
 
 const TICK_MS = 50;
@@ -160,7 +161,7 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
   return (
     <div className={`desk ${g.outcome === 'caught' ? 'is-caught' : ''}`}>
       <header className="hud">
-        <span className="hud-logo">NULLSPACE</span>
+        <span className="hud-logo">{GAME_TITLE}</span>
         <span>NIGHT {g.cfg.night}</span>
         <span className="hud-clock">{clockLabel(g)}</span>
         <span>FLOOR {g.floor}</span>

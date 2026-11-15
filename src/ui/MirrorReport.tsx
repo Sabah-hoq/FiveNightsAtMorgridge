@@ -1,6 +1,7 @@
 import type { GameEvent, MirrorMetrics, RunConfig, RunRow } from '../core/types';
 import { TACTIC_LABEL } from '../data/fallbackLines';
 import { AI_OUTPUT, TASKS } from '../data/tasks';
+import { CertLine, GAME_TITLE } from './CertLine';
 
 const CHOICE_TEXT: Record<GameEvent['choice'], string> = {
   accept: 'Accepted',
@@ -44,6 +45,12 @@ export function MirrorReport({ cfg, events, metrics: m, row, source, onAgain }: 
 
   return (
     <main className="mirror">
+      <header className="mirror-title">
+        <p className="logo small">{GAME_TITLE}</p>
+        {/* Errors = lies C.A.I.-0 told that the player accepted. Do everything yourself and the 0 stays true. */}
+        <CertLine errors={m.liesTold - m.liesCaught} />
+      </header>
+
       <header className="mirror-head">
         <p className="eyebrow">MIRROR REPORT</p>
         <p className="eyebrow sub">{row.outcome === 'caught' ? `CAUGHT AT ${row.caught_at}` : 'YOU HELD THE OFFICE UNTIL 2:00 AM'}</p>
