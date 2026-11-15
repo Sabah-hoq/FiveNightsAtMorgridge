@@ -17,6 +17,7 @@ import { sfx, toggleMute } from './sfx';
 
 const TICK_MS = 50;
 const END_HOLD_MS = 1600;
+const CAUGHT_HOLD_MS = 2300; // long enough for the scream to finish
 // Dev aid: add ?speed=4 to the URL to play a night 4x faster while testing.
 const SPEED = Math.max(1, Number(new URLSearchParams(window.location.search).get('speed')) || 1);
 const camLabel = (cam: Cam) => CAMS.find((c) => c.id === cam)!.label;
@@ -64,7 +65,7 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
       if (s === 'resolve') logEvent(g.events[g.events.length - 1]);
       if ((s === 'caught' || s === 'survived') && !ended.current) {
         ended.current = true;
-        setTimeout(() => onEnd(g), END_HOLD_MS);
+        setTimeout(() => onEnd(g), s === 'caught' ? CAUGHT_HOLD_MS : END_HOLD_MS);
       }
     }
   };

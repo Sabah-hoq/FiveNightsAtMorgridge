@@ -2,6 +2,8 @@
  * Placeholder sound, synthesized so the demo ships as one file.
  * The spec cuts procedural audio from the MVP: swap these for free SFX files and keep the same function names.
  */
+import screamUrl from '../assets/scream.mp3';
+
 let ctx: AudioContext | null = null;
 let muted = false;
 
@@ -13,6 +15,19 @@ export function initAudio(): void {
   } catch {
     ctx = null;
   }
+}
+
+/** The scream on the "IT GOT IN" screen is a real recording, not synthesized. */
+const scream = new Audio(screamUrl);
+scream.preload = 'auto';
+
+function playScream(): void {
+  if (muted) return;
+  scream.currentTime = 0;
+  scream.volume = 0.9;
+  void scream.play().catch(() => {
+    /* browser blocked playback: the screen still shows */
+  });
 }
 
 export function toggleMute(): boolean {
@@ -70,6 +85,6 @@ export const sfx = {
   steps: () => { for (let i = 0; i < 6; i++) tone(70, 0.14, 'sine', 0.22, i * 0.42, 45); },
   floor: () => tone(220, 0.5, 'sine', 0.05, 0, 110),
   powerout: () => tone(200, 1.1, 'sawtooth', 0.1, 0, 30),
-  caught: () => { noise(1.1, 0.3); tone(120, 1.0, 'sawtooth', 0.18, 0, 50); },
+  caught: () => { noise(0.5, 0.2); playScream(); },
   survived: () => { tone(523, 0.3, 'sine', 0.07); tone(784, 0.6, 'sine', 0.07, 0.3); },
 };
