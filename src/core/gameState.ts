@@ -48,7 +48,7 @@ export interface GameState {
 // Tuning. Rates are per in-game minute so both shift lengths drain the same per night.
 export const NIGHT_MS = { judge: 180_000, full: 300_000 } as const;
 /** Night 1: both doors sealed from 12:00 to 2:00 still leaves power. Each later night drains 35% faster. */
-const DOOR_DRAIN = 0.3;
+const DOOR_DRAIN = 0.48;
 const powerScale = (night: number): number => 1 + (night - 1) * 0.35;
 /** With the power out the doors open, and something arrives this many ms later. */
 const POWER_OUT_GRACE_MS = 3000;
