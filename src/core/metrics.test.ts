@@ -33,11 +33,16 @@ describe('mirror metrics', () => {
     expect(median([])).toBeNull();
   });
 
-  it('ranks the run against a cohort', () => {
+  it('builds the room mirror including this run', () => {
     const low = { tactic: 'helpful' as const, synthetic: true, events: [ev(1, 'self', true, null, 1)] };
-    const high = { tactic: 'urgent' as const, synthetic: true, events: [ev(1, 'accept', true, null, 1)] };
-    const m = computeMirror(run, [low, low, low, high]);
-    expect(m.percentile).toBeCloseTo(0.75);
-    expect(m.leastCheckedTactic).not.toBeNull();
+    const high = { tactic: 'urgent' as const, synthetic: true, events: [ev(1, 'accept', false, null, 1)] };
+    const m = computeMirror(run, [low, high], 'urgent');
+    expect(m.room.runs).toBe(3);
+    expect(m.room.syntheticRuns).toBe(2);
+    expect(m.room.handoffRate).toBeCloseTo(4 / 7);
+    expect(m.room.liesTold).toBe(3);
+    expect(m.room.liesAccepted).toBe(2);
+    expect(m.room.byTactic.find((t) => t.tactic === 'urgent')!.runs).toBe(2);
+    expect(m.room.byTask[0]).toEqual({ taskId: 1, handoffRate: 2 / 3 });
   });
 });

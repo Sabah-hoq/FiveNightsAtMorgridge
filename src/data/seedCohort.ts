@@ -15,7 +15,7 @@ export function seedCohort(n = 24): CohortRun[] {
     const runId = `seed_${i}`;
     const r = rng(hashSeed(runId));
     const tactic = TACTICS[i % TACTICS.length];
-    const lies = liePatternFor(runId);
+    const lies = liePatternFor(runId, TASKS.length);
     const lean = (r() - 0.5) * 0.5; // each simulated player trusts a little more or less
     const events: GameEvent[] = TASKS.map((t) => {
       const timed = t.pressureS !== null;

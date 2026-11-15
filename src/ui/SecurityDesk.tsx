@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
-  accept, check, clockLabel, createGame, flashLight, litSentinel, startSelf, submitSelf, tick, toggleDoor, viewCam,
+  accept, atADoor, check, clockLabel, createGame, startSelf, submitSelf, tick, toggleDoor, unitsOn, viewCam,
   type GameState, type Signal,
 } from '../core/gameState';
+import { doorCam } from '../core/sentinel';
 import { MIN_REPORT_WORDS, wordCount, type SelfAnswer } from '../core/tasks';
-import type { Cam, Side, TaskId } from '../core/types';
-import { ACCEPT_ACK, IDLE_LINE, SELF_ACK, TIMEOUT_ACK } from '../data/fallbackLines';
-import { AI_OUTPUT, NIGHT_MINUTES, NOTE_LINES, T2_CORRECT_ANSWER, TASKS } from '../data/tasks';
+import type { Cam, Side, TaskKind } from '../core/types';
+import { ACCEPT_ACK, IDLE_LINE, SELF_ACK } from '../data/fallbackLines';
+import { AI_OUTPUT, ALERTS, MANUAL_CODES, NIGHT_MINUTES, NOTE_LINES, T2, TASKS, TRUTHS } from '../data/tasks';
 import { logEvent, type RunStart } from '../services/api';
-import sentinelImg from '../assets/sentinel.jpg';
+import blackImg from '../assets/sentinel.jpg';
+import whiteImg from '../assets/sentinel-white.jpg';
 import { CameraGrid, CAMS } from './CameraGrid';
 import { sfx, toggleMute } from './sfx';
 
@@ -16,6 +18,7 @@ const TICK_MS = 50;
 const END_HOLD_MS = 1600;
 // Dev aid: add ?speed=4 to the URL to play a night 4x faster while testing.
 const SPEED = Math.max(1, Number(new URLSearchParams(window.location.search).get('speed')) || 1);
+const camLabel = (cam: Cam) => CAMS.find((c) => c.id === cam)!.label;
 
 function Typed({ text }: { text: string }) {
   const [n, setN] = useState(0);
@@ -28,27 +31,24 @@ function Typed({ text }: { text: string }) {
 }
 
 function Door({ side, g, act }: { side: Side; g: GameState; act: (fn: () => Signal[]) => void }) {
-  const lit = g.lightMs[side] > 0;
-  const dead = g.power <= 0;
+  const sealed = g.doors[side];
   return (
-    <section className={`door ${g.doors[side] ? 'closed' : ''} ${lit ? 'lit' : ''}`} aria-label={`Door ${side}`}>
+    <section className={`door ${sealed ? 'closed' : ''}`} aria-label={`Door ${side}`}>
       <div className="doorway">
-        {litSentinel(g, side) && <img src={sentinelImg} alt="Something is in the doorway" />}
         <div className="shutter" />
         <span className="door-tag">DOOR {side}</span>
+        <span className="door-state">{sealed ? 'SEALED' : 'OPEN'}</span>
       </div>
-      <button id={`door-${side}`} className={`key ${g.doors[side] ? 'on' : ''}`} disabled={dead} onClick={() => act(() => toggleDoor(g, side))}>
-        DOOR {side} <kbd>{side === 'L' ? 'A' : 'D'}</kbd>
-      </button>
-      <button id={`light-${side}`} className="key" disabled={dead} onClick={() => act(() => flashLight(g, side))}>
-        LIGHT {side} <kbd>{side === 'L' ? 'Q' : 'E'}</kbd>
+      <p className="door-note">{side === 'L' ? 'WEST HALL' : 'EAST HALL'}</p>
+      <button id={`door-${side}`} className={`key ${sealed ? 'on' : ''}`} disabled={g.power <= 0} onClick={() => act(() => toggleDoor(g, side))}>
+        {sealed ? 'OPEN' : 'SEAL'} DOOR {side} <kbd>{side === 'L' ? 'A' : 'D'}</kbd>
       </button>
     </section>
   );
 }
 
 export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: GameState) => void }) {
-  const g = useMemo(() => createGame(start.cfg, TASKS, NIGHT_MINUTES), [start]);
+  const g = useMemo(() => createGame(start.cfg, TASKS, NIGHT_MINUTES, TRUTHS), [start]);
   const [, force] = useReducer((x: number) => x + 1, 0);
   const [glitchUntil, setGlitchUntil] = useState(0);
   const [report, setReport] = useState('');
@@ -86,17 +86,18 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
   }, [g]);
 
   const task = g.task;
+  const kind = task?.def.kind;
   const selfStage = task?.stage === 'self';
 
-  const submit = (answer: SelfAnswer) => act(() => submitSelf(g, answer, T2_CORRECT_ANSWER));
+  const submit = (answer: SelfAnswer) => act(() => submitSelf(g, answer));
   const sendReport = () => {
     if (wordCount(report) >= MIN_REPORT_WORDS) submit({ kind: 'report', text: report });
   };
   const selectCam = (cam: Cam | null) => act(() => viewCam(g, cam));
 
   useEffect(() => {
-    if (selfStage && task?.def.id === 4) reportRef.current?.focus();
-  }, [selfStage, task?.def.id]);
+    if (selfStage && kind === 'radio') reportRef.current?.focus();
+  }, [selfStage, kind]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -107,23 +108,21 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
       if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
       const k = e.key.toLowerCase();
       const cam = CAMS.find((c) => c.key === k);
+      const t = g.task;
       if (k === 'a') act(() => toggleDoor(g, 'L'));
       else if (k === 'd') act(() => toggleDoor(g, 'R'));
-      else if (k === 'q') act(() => flashLight(g, 'L'));
-      else if (k === 'e') act(() => flashLight(g, 'R'));
-      else if (cam) selectCam(g.cam === cam.id ? null : cam.id);
-      else if (k === 'm') setMuted(toggleMute());
+      else if (cam) selectCam(cam.id);
+      else if (k === 'm') selectCam(null);
       else if (k === 'enter') act(() => accept(g));
       else if (k === 'c') act(() => check(g));
       else if (k === ' ') {
         e.preventDefault();
-        const t = g.task;
         if (!t) return;
-        if (t.stage === 'offer') act(() => startSelf(g));
-        else if (t.def.id === 1) submit({ kind: 'read' });
-        else if (t.def.id === 3 && g.cam) submit({ kind: 'cam', cam: g.cam });
-        else if (t.def.id === 5) submit({ kind: 'doors' });
-      } else if (g.task?.stage === 'self' && g.task.def.id === 2 && (k === 'y' || k === 'n')) {
+        if (t.stage === 'offer' && t.def.kind === 'cam') act(() => check(g));
+        else if (t.stage === 'offer') act(() => startSelf(g));
+        else if (t.def.kind === 'note' || t.def.kind === 'code') submit({ kind: 'read' });
+        else if (t.def.kind === 'door') submit({ kind: 'doors' });
+      } else if (t?.stage === 'self' && t.def.kind === 'math' && (k === 'y' || k === 'n')) {
         submit({ kind: 'yesno', value: k === 'y' });
       } else return;
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
@@ -133,8 +132,9 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
   });
 
   const glitch = performance.now() < glitchUntil;
-  const aiOut = (id: TaskId) => {
-    const o = AI_OUTPUT[id];
+  const aiOut = (k: TaskKind) => {
+    const o = AI_OUTPUT[k];
+    const id = TASKS.find((t) => t.kind === k)!.id;
     return (g.cfg.liePattern[id - 1] ? o.lie : o.truth).replace('{side}', g.cfg.claimedSide);
   };
 
@@ -142,73 +142,99 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
   let line = IDLE_LINE;
   let applied: string | null = null;
   const res = g.lastResolution;
-  if (task) line = start.lines[task.def.id];
+  if (task) line = start.lines[task.def.kind];
   else if (res) {
-    line = res.timedOut ? TIMEOUT_ACK : res.how === 'accept' ? ACCEPT_ACK[g.cfg.tactic] : SELF_ACK;
+    line = res.how === 'accept' ? ACCEPT_ACK[g.cfg.tactic] : SELF_ACK;
     if (res.how === 'accept') {
-      if (res.taskId === 1) applied = `SUMMARY: ${aiOut(1)}`;
-      if (res.taskId === 4) applied = `SENT TO CAMPUS SECURITY: ${aiOut(4)}`;
-      if (res.taskId === 5) applied = `DOOR ${g.cfg.claimedSide} CLOSED BY C.A.I.-0`;
-    }
+      if (res.kind === 'note') applied = `SUMMARY: ${aiOut('note')}`;
+      if (res.kind === 'radio') applied = `SENT TO CAMPUS SECURITY: ${aiOut('radio')}`;
+      if (res.kind === 'door') applied = `DOOR ${g.cfg.claimedSide} SEALED BY C.A.I.-0`;
+    } else if (res.kind === 'cam') applied = 'YOU LOOKED AT THE CAMERA YOURSELF';
   }
 
-  const timeLeft = task?.def.pressureS ? Math.max(0, (task.deadlineMs - g.elapsedMs) / (task.def.pressureS * 1000)) : null;
-  const camName = g.cam ? CAMS.find((c) => c.id === g.cam)!.label : null;
+  const claimedCam = camLabel(doorCam(g.cfg.claimedSide));
+  const card = (title: string, lines: string[]) => (
+    <div className="reveal"><div className="note"><small>{title}</small>{lines.map((l) => <p key={l}>{l}</p>)}</div></div>
+  );
 
   return (
     <div className={`desk ${g.outcome === 'caught' ? 'is-caught' : ''}`}>
       <header className="hud">
         <span className="hud-logo">NULLSPACE</span>
-        <span>NIGHT 1</span>
+        <span>NIGHT {g.cfg.night}</span>
         <span className="hud-clock">{clockLabel(g)}</span>
         <span>FLOOR {g.floor}</span>
+        {atADoor(g) && <span className="hud-alert">FOOTSTEPS AT A DOOR</span>}
         <span className={`power ${g.power < 25 ? 'low' : ''}`}>
           POWER {Math.ceil(g.power)}%
           <i><b style={{ width: `${g.power}%` }} /></i>
         </span>
-        <button id="mute" className="hud-mute" onClick={() => setMuted(toggleMute())}>{muted ? 'SOUND OFF' : 'SOUND ON'} <kbd>M</kbd></button>
+        <button id="mute" className="hud-mute" onClick={() => setMuted(toggleMute())}>{muted ? 'SOUND OFF' : 'SOUND ON'}</button>
       </header>
 
       <div className="main">
         <Door side="L" g={g} act={act} />
-        <CameraGrid cam={g.cam} sentinel={g.sentinel} clock={clockLabel(g)} glitch={glitch} onSelect={selectCam} />
+        <CameraGrid cam={g.cam} units={g.cam ? unitsOn(g, g.cam) : []} doors={g.doors} clock={clockLabel(g)} glitch={glitch} onSelect={selectCam} />
         <Door side="R" g={g} act={act} />
       </div>
 
       <section className={`panel ${task ? 'has-task' : ''}`} aria-live="polite">
-        {timeLeft !== null && <div className="timer" aria-hidden="true"><b style={{ width: `${timeLeft * 100}%` }} /></div>}
         <div className="panel-task">
           {task ? (
             <>
-              <p className="task-title">TASK {task.def.id} OF {TASKS.length} · {task.def.title}</p>
+              <p className="task-title">TASK {task.def.id} OF {TASKS.length}<br />{task.def.title}</p>
               <p className="task-prompt">{task.def.prompt}</p>
             </>
           ) : (
-            <p className="task-title">{g.nextTask >= TASKS.length ? 'HOLD THE OFFICE UNTIL 2:00 AM' : 'DESK IDLE'}</p>
+            <p className="task-title">
+              {g.power <= 0 ? 'POWER OUT. THE DOORS ARE OPEN.' : 'WATCH THE CAMERAS. SEAL A DOOR IF SOMETHING REACHES IT.'}
+            </p>
           )}
           <p className="ai-line"><span className="ai-tag">C.A.I.-0</span><Typed text={line} /></p>
           {applied && <p className="applied">{applied}</p>}
 
-          {task?.revealed && task.def.id === 1 && (
-            <div className="reveal two">
-              <div className="note"><small>THE NOTE</small>{NOTE_LINES.map((l) => <p key={l}>{l}</p>)}</div>
-              <div className="draft"><small>C.A.I.-0 SUMMARY</small><p>{aiOut(1)}</p></div>
+          {/* A visual for each task, so the player can see what is being asked about. */}
+          {kind === 'note' && !selfStage && <div className="prop folded" aria-label="Folded sticky note">FOLDED<br />NOTE</div>}
+          {kind === 'code' && !selfStage && <div className="prop code" aria-label="Alarm panel showing E-14">E-14</div>}
+          {kind === 'rank' && !selfStage && (
+            <ul className="prop alerts">{ALERTS.map((a) => <li key={a.id}>{a.text}</li>)}</ul>
+          )}
+          {kind === 'radio' && <div className="prop radio" aria-hidden="true"><i /><i /><i /><i /><i /><span>CAMPUS SECURITY, CHANNEL 2</span></div>}
+          {kind === 'door' && (
+            <div className="prop doors" aria-label="Door status">
+              <span className={g.doors.L ? 'sealed' : ''}>DOOR L<br />{g.doors.L ? 'SEALED' : 'OPEN'}</span>
+              <span className="you">YOU</span>
+              <span className={g.doors.R ? 'sealed' : ''}>DOOR R<br />{g.doors.R ? 'SEALED' : 'OPEN'}</span>
             </div>
           )}
-          {task?.revealed && task.def.id === 2 && (
-            <div className="reveal"><div className="readout"><small>BREAKER PANEL</small><p>RESERVE 20% · DOOR L 8% · DOOR R 8%</p></div></div>
+
+          {task?.revealed && kind === 'math' && (
+            <div className="reveal">
+              <div className="readout">
+                <small>BREAKER PANEL</small>
+                <p className="gauge"><span>RESERVE</span><i><b style={{ width: `${T2.reserve * 4}%` }} /></i><span>{T2.reserve}%</span></p>
+                <p className="gauge"><span>DOOR L</span><i><b style={{ width: `${T2.perDoor * 4}%` }} /></i><span>{T2.perDoor}%</span></p>
+                <p className="gauge"><span>DOOR R</span><i><b style={{ width: `${T2.perDoor * 4}%` }} /></i><span>{T2.perDoor}%</span></p>
+              </div>
+            </div>
           )}
-          {task?.revealed && task.def.id === 4 && (
-            <div className="reveal"><div className="draft"><small>C.A.I.-0 DRAFT</small><p>{aiOut(4)}</p></div></div>
+          {task?.revealed && kind === 'radio' && (
+            <div className="reveal"><div className="draft"><small>C.A.I.-0 DRAFT</small><p>{aiOut('radio')}</p></div></div>
           )}
 
-          {selfStage && task.def.id === 1 && !task.revealed && (
-            <div className="reveal"><div className="note"><small>THE NOTE</small>{NOTE_LINES.map((l) => <p key={l}>{l}</p>)}</div></div>
+          {selfStage && kind === 'note' && card('THE NOTE', NOTE_LINES)}
+          {selfStage && kind === 'code' && (
+            <div className="reveal">
+              <div className="manual">
+                <small>CODE MANUAL</small>
+                <dl>{MANUAL_CODES.map(([code, meaning]) => [<dt key={code}>{code}</dt>, <dd key={meaning}>{meaning}</dd>])}</dl>
+              </div>
+            </div>
           )}
-          {selfStage && task.def.id === 4 && (
+          {selfStage && kind === 'radio' && (
             <label className="report" htmlFor="report">
-              YOUR REPORT ({Math.max(0, MIN_REPORT_WORDS - wordCount(report))} more words)
-              <input id="report" ref={reportRef} value={report} maxLength={120} autoComplete="off" placeholder="say what you saw"
+              YOUR ANSWER
+              <input id="report" ref={reportRef} value={report} maxLength={120} autoComplete="off" placeholder="say what you see"
                 onChange={(e) => setReport(e.target.value)} />
             </label>
           )}
@@ -217,56 +243,58 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
         <div className="choices">
           {task && !selfStage && (
             <>
-              <button id="accept" className="key accept" onClick={() => act(() => accept(g))}>
-                {task.def.id === 5 ? `LET C.A.I.-0 CLOSE DOOR ${g.cfg.claimedSide}` : 'ACCEPT'} <kbd>Enter</kbd>
+              <button id="accept" className="key" onClick={() => act(() => accept(g))}>
+                {kind === 'door' ? `LET C.A.I.-0 SEAL DOOR ${g.cfg.claimedSide}` : 'ACCEPT'} <kbd>Enter</kbd>
               </button>
-              <button id="self" className="key" onClick={() => act(() => startSelf(g))}>
-                {task.def.selfLabel} <kbd>Space</kbd>
-              </button>
-              <button id="check" className="key" onClick={() => act(() => check(g))}>
-                {task.def.id === 5 ? `FLASH LIGHT ${g.cfg.claimedSide}` : task.def.checkLabel} <kbd>C</kbd>
-              </button>
+              {kind === 'cam' ? (
+                <button id="check" className="key" onClick={() => act(() => check(g))}>
+                  {task.def.checkLabel} <kbd>Space</kbd>
+                </button>
+              ) : (
+                <>
+                  <button id="self" className="key" onClick={() => act(() => startSelf(g))}>
+                    {task.def.selfLabel} <kbd>Space</kbd>
+                  </button>
+                  {task.def.hasCheck && (
+                    <button id="check" className="key" onClick={() => act(() => check(g))}>
+                      {kind === 'door' ? `OPEN ${claimedCam}` : task.def.checkLabel} <kbd>C</kbd>
+                    </button>
+                  )}
+                </>
+              )}
             </>
           )}
-          {selfStage && task.def.id === 1 && (
+          {selfStage && (kind === 'note' || kind === 'code') && (
             <button id="self-done" className="key" onClick={() => submit({ kind: 'read' })}>I HAVE READ IT <kbd>Space</kbd></button>
           )}
-          {selfStage && task.def.id === 2 && (
+          {selfStage && kind === 'math' && (
             <>
               <button id="self-yes" className="key" onClick={() => submit({ kind: 'yesno', value: true })}>YES, SEAL BOTH <kbd>Y</kbd></button>
               <button id="self-no" className="key" onClick={() => submit({ kind: 'yesno', value: false })}>NO, SEAL ONE <kbd>N</kbd></button>
             </>
           )}
-          {selfStage && task.def.id === 3 && (
-            <>
-              <p className="hint">Look through the cameras with 1, 2, 3. Report from the feed where you see it.</p>
-              <button id="self-cam" className="key" disabled={!g.cam} onClick={() => g.cam && submit({ kind: 'cam', cam: g.cam })}>
-                {camName ? `REPORT: IT IS ON ${camName}` : 'OPEN A CAMERA FIRST'} <kbd>Space</kbd>
-              </button>
-            </>
-          )}
-          {selfStage && task.def.id === 4 && (
+          {selfStage && kind === 'rank' && ALERTS.map((a) => (
+            <button key={a.id} id={`pick-${a.id}`} className="key pick" onClick={() => submit({ kind: 'pick', value: a.id })}>{a.text}</button>
+          ))}
+          {selfStage && kind === 'radio' && (
             <button id="self-send" className="key" disabled={wordCount(report) < MIN_REPORT_WORDS} onClick={sendReport}>
-              SEND MY REPORT <kbd>Enter</kbd>
+              SEND MY ANSWER <kbd>Enter</kbd>
             </button>
           )}
-          {selfStage && task.def.id === 5 && (
-            <>
-              <p className="hint">Your call. Lights: Q / E. Doors: A / D.</p>
-              <button id="self-lock" className="key" onClick={() => submit({ kind: 'doors' })}>LOCK IT IN <kbd>Space</kbd></button>
-            </>
+          {selfStage && kind === 'door' && (
+            <button id="self-lock" className="key" onClick={() => submit({ kind: 'doors' })}>LOCK IT IN <kbd>Space</kbd></button>
           )}
         </div>
       </section>
 
       {g.outcome === 'caught' && (
         <div className="jump" role="alert">
-          <img src={sentinelImg} alt="" />
-          <p>IT GOT IN · {g.caughtAt}</p>
+          <img src={g.caughtBy === 'white' ? whiteImg : blackImg} alt="" />
+          <p>IT GOT IN<br /><small>{g.caughtAt}</small></p>
         </div>
       )}
       {g.outcome === 'survived' && (
-        <div className="dawn" role="alert"><p>2:00 AM</p><small>SHIFT COMPLETE</small></div>
+        <div className="dawn" role="alert"><p>2:00 AM</p><small>YOU HELD THE OFFICE</small></div>
       )}
     </div>
   );

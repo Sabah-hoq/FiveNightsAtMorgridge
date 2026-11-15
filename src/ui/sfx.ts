@@ -64,7 +64,6 @@ function hum(): void {
 
 export const sfx = {
   door: () => { tone(90, 0.22, 'square', 0.12, 0, 40); noise(0.12, 0.08); },
-  light: () => tone(1800, 0.05, 'square', 0.03),
   static: () => noise(0.28, 0.06),
   task: () => { tone(660, 0.09, 'sine', 0.06); tone(880, 0.12, 'sine', 0.06, 0.1); },
   resolve: () => tone(440, 0.08, 'triangle', 0.05),

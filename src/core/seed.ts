@@ -24,17 +24,24 @@ export function rng(seed: number): () => number {
   };
 }
 
-/** 2 or 3 lies out of 5 tasks, seeded from run_id so players cannot share "it lies on task 3". */
-export function liePatternFor(runId: string): boolean[] {
+export const TASK_COUNT = 7;
+const HONEST_OPENERS = 2;
+const LATE_LIES = 3;
+
+/**
+ * C.A.I.-0 earns trust first: the first two tasks are always honest.
+ * It then lies on 3 of the remaining 5. Which ones is seeded from run_id,
+ * so players cannot tell each other "it lies on task 4".
+ */
+export function liePatternFor(runId: string, count = TASK_COUNT): boolean[] {
   const r = rng(hashSeed(runId + ':lies'));
-  const count = r() < 0.5 ? 2 : 3;
-  const idx = [0, 1, 2, 3, 4];
-  for (let i = idx.length - 1; i > 0; i--) {
+  const late = Array.from({ length: count - HONEST_OPENERS }, (_, i) => i + HONEST_OPENERS);
+  for (let i = late.length - 1; i > 0; i--) {
     const j = Math.floor(r() * (i + 1));
-    [idx[i], idx[j]] = [idx[j], idx[i]];
+    [late[i], late[j]] = [late[j], late[i]];
   }
-  const lies = [false, false, false, false, false];
-  idx.slice(0, count).forEach((i) => (lies[i] = true));
+  const lies = Array.from({ length: count }, () => false);
+  late.slice(0, LATE_LIES).forEach((i) => (lies[i] = true));
   return lies;
 }
 
@@ -44,13 +51,13 @@ export function newRunId(): string {
   return `run_${t}_${r}`;
 }
 
-export function makeRunConfig(runId: string, mode: Mode, alias: string | null, startedAt: number): RunConfig {
+export function makeRunConfig(runId: string, mode: Mode, alias: string | null, startedAt: number, night = 1): RunConfig {
   const r = rng(hashSeed(runId + ':cfg'));
   const tactic = TACTICS[Math.floor(r() * TACTICS.length)];
   const claimedSide: Side = r() < 0.5 ? 'L' : 'R';
   const finalSide: Side = r() < 0.5 ? 'L' : 'R';
   const jitter = (r() - 0.5) * 0.04;
-  return { runId, mode, tactic, liePattern: liePatternFor(runId), claimedSide, finalSide, jitter, alias, startedAt };
+  return { runId, mode, night, tactic, liePattern: liePatternFor(runId), claimedSide, finalSide, jitter, alias, startedAt };
 }
 
 export const lieString = (p: boolean[]): string => p.map((x) => (x ? '1' : '0')).join('');

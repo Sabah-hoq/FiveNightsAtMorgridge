@@ -1,9 +1,9 @@
 import { computeMirror } from '../core/metrics';
 import { lieString, makeRunConfig, newRunId } from '../core/seed';
-import type { CohortRun, GameEvent, MirrorMetrics, Mode, RunConfig, RunRow, TaskId } from '../core/types';
+import type { CohortRun, GameEvent, MirrorMetrics, Mode, RunConfig, RunRow, TaskKind } from '../core/types';
 import { fillLine, OFFER_LINES } from '../data/fallbackLines';
 import { seedCohort } from '../data/seedCohort';
-import { AI_OUTPUT } from '../data/tasks';
+import { AI_OUTPUT, TASKS } from '../data/tasks';
 
 /**
  * Talks to OUR backend only (spec 6.5), never to Databricks directly.
@@ -11,11 +11,11 @@ import { AI_OUTPUT } from '../data/tasks';
  * local lines + local metrics so the game runs fully offline.
  */
 const API: string = import.meta.env.VITE_API_URL ?? '';
-const HISTORY_KEY = 'nullspace.runs.v1';
+const HISTORY_KEY = 'nullspace.runs.v2'; // v2: seven tasks
 
 export interface RunStart {
   cfg: RunConfig;
-  lines: Record<TaskId, string>;
+  lines: Record<TaskKind, string>;
   source: 'backend' | 'fallback';
 }
 
@@ -38,14 +38,14 @@ async function post<T>(path: string, body: unknown, timeoutMs: number): Promise<
   }
 }
 
-export function localLines(cfg: RunConfig): Record<TaskId, string> {
+export function localLines(cfg: RunConfig): Record<TaskKind, string> {
   const offers = OFFER_LINES[cfg.tactic];
-  const claim = cfg.liePattern[1] ? AI_OUTPUT[2].lie : AI_OUTPUT[2].truth;
-  const vars = { claim, side: cfg.claimedSide };
-  return {
-    1: fillLine(offers[1], vars), 2: fillLine(offers[2], vars), 3: fillLine(offers[3], vars),
-    4: fillLine(offers[4], vars), 5: fillLine(offers[5], vars),
-  };
+  const lines = {} as Record<TaskKind, string>;
+  for (const t of TASKS) {
+    const out = AI_OUTPUT[t.kind];
+    lines[t.kind] = fillLine(offers[t.kind], { claim: cfg.liePattern[t.id - 1] ? out.lie : out.truth, side: cfg.claimedSide });
+  }
+  return lines;
 }
 
 export async function startRun(mode: Mode, alias: string | null): Promise<RunStart> {
@@ -53,7 +53,7 @@ export async function startRun(mode: Mode, alias: string | null): Promise<RunSta
   if (API) {
     try {
       // Backend may override tactic + lines (one Model Serving call). Lie pattern stays seeded from run_id.
-      const r = await post<{ tactic?: RunConfig['tactic']; lines?: Record<TaskId, string> }>(
+      const r = await post<{ tactic?: RunConfig['tactic']; lines?: Record<TaskKind, string> }>(
         '/api/run/start', { run_id: cfg.runId, mode, lie_pattern: lieString(cfg.liePattern), claimed_side: cfg.claimedSide }, 2500);
       if (r.tactic) cfg.tactic = r.tactic;
       if (r.lines) return { cfg, lines: r.lines, source: 'backend' };
@@ -105,27 +105,16 @@ export function localCohort(): CohortRun[] {
 
 export async function endRun(row: RunRow, events: GameEvent[]): Promise<RunEnd> {
   const cohort = localCohort();
-  const local = computeMirror(events, cohort);
+  const local = computeMirror(events, cohort, row.tactic);
   saveHistory([...loadHistory(), { tactic: row.tactic, synthetic: false, events }]);
   if (API) {
     try {
-      // Spec 6.3: ~8s timeout, then fall back to the local template.
-      const r = await post<{ metrics: MirrorMetrics }>('/api/run/end', { run: row, events }, 8000);
+      // Wait up to 12s (the analyzing screen covers it), then fall back to the local report.
+      const r = await post<{ metrics: MirrorMetrics }>('/api/run/end', { run: row, events }, 12000);
       return { metrics: r.metrics, source: 'backend' };
     } catch {
       /* fall through */
     }
   }
   return { metrics: local, source: 'fallback' };
-}
-
-/** Start-screen counter. Offline it reads the local cohort (seeded rows are labelled in the UI). */
-export function roomStats(): { runs: number; synthetic: number; task3Handoff: number } {
-  const cohort = localCohort();
-  const t3 = cohort.flatMap((r) => r.events.filter((e) => e.task_id === 3));
-  return {
-    runs: cohort.length,
-    synthetic: cohort.filter((r) => r.synthetic).length,
-    task3Handoff: t3.length ? t3.filter((e) => e.choice === 'accept').length / t3.length : 0,
-  };
 }

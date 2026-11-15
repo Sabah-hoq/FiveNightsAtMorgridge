@@ -3,17 +3,17 @@ import { TACTIC_LABEL } from '../data/fallbackLines';
 import { AI_OUTPUT, TASKS } from '../data/tasks';
 
 const CHOICE_TEXT: Record<GameEvent['choice'], string> = {
-  accept: 'accepted',
-  self: 'did it yourself',
-  check_then_accept: 'checked, then accepted',
-  check_then_self: 'checked, then did it yourself',
+  accept: 'Accepted',
+  self: 'Did it yourself',
+  check_then_accept: 'Checked, then accepted',
+  check_then_self: 'Checked, then did it yourself',
 };
 
-const LIE_TEXT = { omission: 'left something out', wrong_fact: 'stated something false', not_yours: 'accurate, but generic' };
+const LIE_TEXT = { omission: 'Left something out', wrong_fact: 'Stated something false', not_yours: 'Accurate, but generic' };
 
-const times = (n: number) => (n === 1 ? 'once' : n === 2 ? 'twice' : `${n} times`);
 const pct = (x: number) => `${Math.round(x * 100)}%`;
-const secs = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
+const secs = (ms: number) => `${(ms / 1000).toFixed(1)} seconds`;
+const SMALL_ROOM = 8;
 
 interface Props {
   cfg: RunConfig;
@@ -24,89 +24,125 @@ interface Props {
   onAgain: () => void;
 }
 
-/** Numbers first, no good/bad labels, no advice, one neutral closing line (spec section 7). */
+function Tile({ label, n, of }: { label: string; n: number; of: number }) {
+  return (
+    <div className="tile">
+      <p className="tile-n">{n}<small> of {of}</small></p>
+      <p className="tile-label">{label}</p>
+    </div>
+  );
+}
+
+/**
+ * Two mirrors, in this order: yours, then the room's.
+ * Numbers first, no good/bad labels, no advice, no ranking of the player against others (spec section 7).
+ */
 export function MirrorReport({ cfg, events, metrics: m, row, source, onAgain }: Props) {
-  const label = TACTIC_LABEL[cfg.tactic];
-  const timed = events.filter((e) => e.pressure_s !== null);
-  const calm = events.filter((e) => e.pressure_s === null);
-  const handed = (es: GameEvent[]) => es.filter((e) => e.choice === 'accept').length;
-  const noAnswer = events.filter((e) => e.timed_out).length;
-
-  let speed: string | null = null;
-  if (m.calmAcceptMs && m.timedAcceptMs) {
-    const ratio = m.calmAcceptMs / m.timedAcceptMs;
-    speed =
-      ratio >= 1.15 ? `Under pressure, you trusted it ${ratio.toFixed(1)}x faster than when calm.`
-      : ratio <= 0.87 ? `Under pressure, you took ${(1 / ratio).toFixed(1)}x longer to trust it than when calm.`
-      : 'You trusted it about as fast under pressure as when calm.';
-  }
-
-  const mine = m.tacticEffects.find((t) => t.tactic === cfg.tactic);
-  let tacticLine = `C.A.I.-0 used ${label} on you.`;
-  if (mine && m.leastCheckedTactic === cfg.tactic) {
-    tacticLine += ` Across ${m.cohortSize} runs, that style got the fewest people to check.`;
-  } else if (mine && m.leastCheckedTactic) {
-    tacticLine += ` Across ${m.cohortSize} runs, people checked ${pct(mine.checkRate)} of its claims in that style. The style that got the fewest checks was ${TACTIC_LABEL[m.leastCheckedTactic]}.`;
-  }
+  const room = m.room;
+  const styles = [...room.byTactic].sort((a, b) => a.checkRate - b.checkRate);
+  const firstLie = events.find((e) => !e.ai_correct);
 
   return (
     <main className="mirror">
-      <p className="eyebrow">
-        MIRROR REPORT · {row.outcome === 'caught' ? `CAUGHT AT ${row.caught_at}` : 'OFFICE HELD UNTIL 2:00 AM'}
-        {cfg.alias ? ` · ${cfg.alias}` : ''}
-      </p>
+      <header className="mirror-head">
+        <p className="eyebrow">MIRROR REPORT</p>
+        <p className="eyebrow sub">{row.outcome === 'caught' ? `CAUGHT AT ${row.caught_at}` : 'YOU HELD THE OFFICE UNTIL 2:00 AM'}</p>
+      </header>
+
       <h1>
         You handed off {m.handoffs} of {m.tasks} tasks you could do in under 10 seconds.
       </h1>
 
+      <div className="tiles">
+        <Tile label="HANDED TO THE AI WITHOUT LOOKING" n={m.handoffs} of={m.tasks} />
+        <Tile label="CHECKED BEFORE DECIDING" n={m.checks} of={m.tasks} />
+        <Tile label="OF ITS LIES, ACCEPTED" n={m.liesTold - m.liesCaught} of={m.liesTold} />
+      </div>
+
       <div className="mirror-lines">
         <p>
-          You checked the AI's claim {times(m.checks)}. It lied to you {times(m.liesTold)}.
-          {m.liesTold > 0 && ` You accepted ${m.liesTold - m.liesCaught} of those.`}
+          C.A.I.-0 used {TACTIC_LABEL[cfg.tactic]} on you.
+          {firstLie
+            ? ` It told you the truth at first. Its first lie came on task ${firstLie.task_id}, and it lied ${m.liesTold} ${m.liesTold === 1 ? 'time' : 'times'} in all.`
+            : ' It told you the truth on every task you reached.'}
         </p>
-        <p>
-          Timed tasks: handed off {handed(timed)} of {timed.length}. Calm tasks: {handed(calm)} of {calm.length}.
-          {speed && ` ${speed}`}
-        </p>
-        {noAnswer > 0 && <p>On {noAnswer} of them the timer ran out and C.A.I.-0 acted for you.</p>}
-        <p>{tacticLine}</p>
-        {m.percentile !== null && <p>You handed off more than {pct(m.percentile)} of players.</p>}
+        {m.trustSpeedMs !== null && <p>When you accepted its answer, you usually decided in {secs(m.trustSpeedMs)}.</p>}
       </div>
 
       <p className="closing">What does this say about you? That's your call.</p>
 
-      <div className="ledger-wrap">
-        <table className="ledger">
-          <caption>WHAT HAPPENED, TASK BY TASK</caption>
-          <thead>
-            <tr><th>#</th><th>C.A.I.-0 said</th><th>That was</th><th>You</th><th>Time</th></tr>
-          </thead>
-          <tbody>
-            {events.map((e) => {
-              const out = AI_OUTPUT[e.task_id];
-              const said = (e.ai_correct ? out.truth : out.lie).replace('{side}', cfg.claimedSide);
-              return (
-                <tr key={e.task_id}>
-                  <td>{e.task_id}</td>
-                  <td>
-                    <span className="said">{said}</span>
-                    <small>{TASKS[e.task_id - 1].parallel}</small>
-                  </td>
-                  <td>{e.ai_correct ? 'true' : `a lie: ${LIE_TEXT[e.lie_type!]}`}</td>
-                  <td>{e.timed_out ? 'no answer in time' : CHOICE_TEXT[e.choice]}</td>
-                  <td>{secs(e.decision_ms)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <section aria-labelledby="night-title">
+        <p className="eyebrow" id="night-title">YOUR NIGHT, TASK BY TASK</p>
+        <ol className="cards">
+          {events.map((e) => {
+            const out = AI_OUTPUT[TASKS[e.task_id - 1].kind];
+            const said = (e.ai_correct ? out.truth : out.lie).replace('{side}', cfg.claimedSide);
+            return (
+              <li key={e.task_id} className="card">
+                <p className="card-n">TASK {e.task_id}</p>
+                <p className="card-topic">{TASKS[e.task_id - 1].parallel}</p>
+                <p className="card-said">{said}</p>
+                <dl>
+                  <div><dt>THAT WAS</dt><dd>{e.ai_correct ? 'True' : `A lie. ${LIE_TEXT[e.lie_type!]}`}</dd></div>
+                  <div><dt>YOU</dt><dd>{CHOICE_TEXT[e.choice]}</dd></div>
+                </dl>
+              </li>
+            );
+          })}
+        </ol>
+      </section>
 
-      <p className="footnote">
-        {source === 'backend'
-          ? `Compared with ${m.cohortSize} other runs in the Databricks Delta tables${m.syntheticRuns ? ` (${m.syntheticRuns} seeded)` : ''}. Computed in SQL.`
-          : `Compared with ${m.cohortSize} runs: ${m.syntheticRuns} seeded demo runs (synthetic) and ${m.cohortSize - m.syntheticRuns} played on this device. Computed locally because the backend was not reachable.`}
-      </p>
+      <section className="room-mirror" aria-labelledby="room-title">
+        <header className="mirror-head">
+          <p className="eyebrow" id="room-title">THE ROOM'S MIRROR</p>
+          <p className="eyebrow sub">{room.runs} {room.runs === 1 ? 'NIGHT' : 'NIGHTS'} PLAYED, INCLUDING YOURS</p>
+        </header>
+        <h2>
+          The room handed off {pct(room.handoffRate)} of tasks and checked {pct(room.checkRate)} of the AI's claims.
+        </h2>
+        <div className="mirror-lines">
+          <p>
+            C.A.I.-0 lied {room.liesTold} times across the room. {room.liesAccepted} of those lies were accepted.
+          </p>
+        </div>
+
+        <div className="room-tables">
+          <table className="ledger">
+            <caption>BY AI VOICE</caption>
+            <thead><tr><th>Voice</th><th>Nights</th><th>Claims checked</th><th>Handed off</th></tr></thead>
+            <tbody>
+              {styles.map((t) => (
+                <tr key={t.tactic}>
+                  <td>{TACTIC_LABEL[t.tactic]}{t.tactic === cfg.tactic && <small> (yours)</small>}</td>
+                  <td>{t.runs}</td>
+                  <td>{pct(t.checkRate)}</td>
+                  <td>{pct(t.handoffRate)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <table className="ledger">
+            <caption>BY TASK</caption>
+            <thead><tr><th>#</th><th>Task</th><th>Handed off</th></tr></thead>
+            <tbody>
+              {room.byTask.map((t) => (
+                <tr key={t.taskId}>
+                  <td>{t.taskId}</td>
+                  <td>{TASKS[t.taskId - 1]?.parallel}</td>
+                  <td>{pct(t.handoffRate)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <p className="footnote">
+          {room.runs < SMALL_ROOM && `Only ${room.runs} ${room.runs === 1 ? 'night' : 'nights'} so far, so these numbers will move a lot. `}
+          {source === 'backend'
+            ? `Computed in SQL from the Databricks Delta tables${room.syntheticRuns ? ` (${room.syntheticRuns} seeded runs included)` : ''}.`
+            : `Computed locally because the backend was not reachable: ${room.syntheticRuns} seeded demo runs (synthetic) and ${room.runs - room.syntheticRuns} played on this device.`}
+        </p>
+      </section>
 
       <button id="again" className="key" onClick={onAgain}>PLAY ANOTHER NIGHT</button>
     </main>

@@ -5,18 +5,26 @@ export type Mode = 'judge' | 'full';
 export type Choice = 'accept' | 'self' | 'check_then_accept' | 'check_then_self';
 export type LieType = 'omission' | 'wrong_fact' | 'not_yours';
 export type Side = 'L' | 'R';
-export type Cam = 'CAM02' | 'CAM03' | 'CAM04';
-export type SentinelNode = Cam | 'DOOR_L' | 'DOOR_R' | 'GONE';
-export type TaskId = 1 | 2 | 3 | 4 | 5;
+/** CAM 01 watches Door L, CAM 02 watches Door R, CAM 03 and CAM 04 watch the halls further out. */
+export type Cam = 'CAM01' | 'CAM02' | 'CAM03' | 'CAM04';
+export type SentinelNode = 'CAM04' | 'CAM03' | 'DOOR_L' | 'DOOR_R' | 'GONE';
+/** The black unit walks all night. The white unit joins on floor 2. */
+export type Unit = 'black' | 'white';
+export type TaskId = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+/** What a task is about. Core and UI switch on this, not on the task number. */
+export type TaskKind = 'note' | 'math' | 'code' | 'cam' | 'rank' | 'radio' | 'door';
 
 export interface TaskDef {
   id: TaskId;
+  kind: TaskKind;
+  /** False when the only choices are accept or do it myself. */
+  hasCheck: boolean;
   floor: 1 | 2;
   /** In-game minutes after 12:00 AM when the task opens. */
   atMin: number;
   title: string;
   prompt: string;
-  /** Seconds of hard timer, or null for calm tasks. */
+  /** Always null: tasks have no timer of their own. The night clock is the only pressure. */
   pressureS: number | null;
   lieType: LieType;
   selfLabel: string;
@@ -30,9 +38,11 @@ export interface RunConfig {
   tactic: Tactic;
   /** liePattern[i] is true when C.A.I.-0 lies on task i+1. */
   liePattern: boolean[];
-  /** Door C.A.I.-0 names on task 5. */
+  /** Door C.A.I.-0 names on the door task. */
   claimedSide: Side;
-  /** Door for the unassisted approach near 2:00 AM. */
+  /** Night number. Night 1 is the easy one; power drains faster on later nights. */
+  night: number;
+  /** Door the white unit tries near 2:00 AM, with no offer from C.A.I.-0. */
   finalSide: Side;
   /** Small seeded offset for sentinel timing, in night fraction. */
   jitter: number;
@@ -54,7 +64,7 @@ export interface GameEvent {
   pressure_s: number | null;
   player_correct: boolean;
   ts: string;
-  /** NOT in spec 6.1. True when the timer ran out and C.A.I.-0 acted by default. */
+  /** NOT in spec 6.1. Always false now that tasks have no time limit. Kept so the table schema is unchanged. */
   timed_out: boolean;
 }
 
@@ -100,12 +110,21 @@ export interface TacticEffect {
   checkRate: number;
 }
 
-export interface MirrorMetrics extends RunSummary {
-  cohortSize: number;
+/** What everyone who played did. Shown only after a run ends, never before or during play. */
+export interface RoomMirror {
+  runs: number;
   syntheticRuns: number;
-  /** Share of cohort runs with a lower handoff rate than this run. */
-  percentile: number | null;
-  tacticEffects: TacticEffect[];
-  /** Tactic with the lowest check rate across the cohort. */
-  leastCheckedTactic: Tactic | null;
+  handoffRate: number;
+  checkRate: number;
+  liesTold: number;
+  liesAccepted: number;
+  timedHandoffRate: number | null;
+  calmHandoffRate: number | null;
+  byTactic: TacticEffect[];
+  byTask: { taskId: number; handoffRate: number }[];
+}
+
+export interface MirrorMetrics extends RunSummary {
+  /** Includes the run that just ended. */
+  room: RoomMirror;
 }

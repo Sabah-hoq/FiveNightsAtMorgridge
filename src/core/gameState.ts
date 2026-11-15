@@ -1,58 +1,70 @@
-import type { Cam, GameEvent, RunConfig, SentinelNode, Side, TaskDef, TaskId } from './types';
-import { ATTACK_WINDOW_MS, FINAL_ATTACK_F, nodeAt, sentinelPlan, task5Side, type SentinelStep } from './sentinel';
-import { buildEvent, selfCorrect, type ActiveTask, type SelfAnswer } from './tasks';
+import type { Cam, GameEvent, RunConfig, SentinelNode, Side, TaskDef, TaskId, TaskKind, Unit } from './types';
+import {
+  attackWindowMs, camFor, doorCam, doorTaskSide, dueF, FINAL_ATTACK_F, nodeAt, sentinelPlans, type SentinelStep,
+} from './sentinel';
+import { buildEvent, selfCorrect, type ActiveTask, type SelfAnswer, type Truths } from './tasks';
 
 /** Things the presentation layer may want to react to (sound, flashes). Core never plays them. */
-export type Signal = 'task' | 'resolve' | 'door' | 'light' | 'static' | 'steps' | 'floor' | 'powerout' | 'caught' | 'survived';
+export type Signal = 'task' | 'resolve' | 'door' | 'static' | 'steps' | 'floor' | 'powerout' | 'caught' | 'survived';
 
 export interface Resolution {
   taskId: TaskId;
+  kind: TaskKind;
   how: 'accept' | 'self';
-  timedOut: boolean;
 }
+
+type Attack = { state: 'pending' | 'active' | 'done'; endsAtMs: number };
 
 export interface GameState {
   cfg: RunConfig;
   tasks: TaskDef[];
+  truths: Truths;
   nightMinutes: number;
   nightMs: number;
+  /** Night clock. It never stops: a task has no timer, but the building keeps moving while you decide. */
   elapsedMs: number;
   phase: 'playing' | 'ended';
   outcome: 'survived' | 'caught' | null;
   caughtAt: string | null;
+  caughtBy: Unit | null;
   floor: 1 | 2;
   power: number;
+  powerOutAtMs: number | null;
   doors: Record<Side, boolean>;
-  lightMs: Record<Side, number>;
+  /** null = the building map. */
   cam: Cam | null;
-  plan: SentinelStep[];
-  sentinel: SentinelNode;
-  finalAttack: { state: 'pending' | 'active' | 'done'; endsAtMs: number };
+  plans: Record<Unit, SentinelStep[]>;
+  sentinels: Record<Unit, SentinelNode>;
+  /** Black unit at a door (the door task). */
+  blackAttack: Attack;
+  /** White unit at a door near 2:00 AM. */
+  finalAttack: Attack;
   task: ActiveTask | null;
   nextTask: number;
   lastResolution: Resolution | null;
   events: GameEvent[];
 }
 
-// Tuning. Rates are per in-game minute so judge mode and full mode drain the same per night.
-export const NIGHT_MS = { judge: 120_000, full: 240_000 } as const;
-const IDLE_DRAIN = 0.15;
-const DOOR_DRAIN = 1.6;
-const LIGHT_COST = 1.5;
-const LIGHT_MS = 900;
+// Tuning. Rates are per in-game minute so both shift lengths drain the same per night.
+export const NIGHT_MS = { judge: 180_000, full: 300_000 } as const;
+/** Night 1: both doors sealed from 12:00 to 2:00 still leaves power. Each later night drains 35% faster. */
+const DOOR_DRAIN = 0.3;
+const powerScale = (night: number): number => 1 + (night - 1) * 0.35;
+/** With the power out the doors open, and something arrives this many ms later. */
+const POWER_OUT_GRACE_MS = 3000;
 
-export function createGame(cfg: RunConfig, tasks: TaskDef[], nightMinutes: number): GameState {
-  const plan = sentinelPlan(cfg);
+export function createGame(cfg: RunConfig, tasks: TaskDef[], nightMinutes: number, truths: Truths): GameState {
+  const plans = sentinelPlans(cfg, tasks, nightMinutes);
   return {
-    cfg, tasks, nightMinutes,
+    cfg, tasks, truths, nightMinutes,
     nightMs: NIGHT_MS[cfg.mode],
     elapsedMs: 0,
-    phase: 'playing', outcome: null, caughtAt: null,
-    floor: 1, power: 100,
+    phase: 'playing', outcome: null, caughtAt: null, caughtBy: null,
+    floor: 1, power: 100, powerOutAtMs: null,
     doors: { L: false, R: false },
-    lightMs: { L: 0, R: 0 },
     cam: null,
-    plan, sentinel: plan[0].node,
+    plans, sentinels: { black: plans.black[0].node, white: plans.white[0].node },
+    blackAttack: { state: 'pending', endsAtMs: 0 },
     finalAttack: { state: 'pending', endsAtMs: 0 },
     task: null, nextTask: 0, lastResolution: null, events: [],
   };
@@ -66,67 +78,57 @@ export function clockLabel(s: GameState): string {
   return `${hour}:${String(total % 60).padStart(2, '0')} AM`;
 }
 
-const openMs = (s: GameState, i: number): number =>
-  i < s.tasks.length ? (s.tasks[i].atMin / s.nightMinutes) * s.nightMs : s.nightMs;
+const dueMs = (s: GameState, i: number): number => (s.tasks[i].atMin / s.nightMinutes) * s.nightMs;
 
-const isAt = (s: GameState, side: Side): boolean => s.sentinel === (side === 'L' ? 'DOOR_L' : 'DOOR_R');
+/** Units a camera can see right now. */
+export function unitsOn(s: GameState, cam: Cam): Unit[] {
+  return (['black', 'white'] as Unit[]).filter((u) => camFor(s.sentinels[u]) === cam);
+}
 
-/** True when a flashed light on that side shows the sentinel in the doorway. */
-export const litSentinel = (s: GameState, side: Side): boolean => s.lightMs[side] > 0 && isAt(s, side);
+/** True while something is standing at either door. The UI may say so, but never which door. */
+export const atADoor = (s: GameState): boolean =>
+  Object.values(s.sentinels).some((n) => n === 'DOOR_L' || n === 'DOOR_R');
 
-function caught(s: GameState, out: Signal[]): void {
+function caught(s: GameState, by: Unit, out: Signal[]): void {
   s.phase = 'ended';
   s.outcome = 'caught';
   s.caughtAt = clockLabel(s);
+  s.caughtBy = by;
   out.push('caught');
 }
 
-function finish(s: GameState, how: 'accept' | 'self', playerCorrect: boolean, timedOut: boolean, out: Signal[]): void {
+/** The black unit's visit to a door ends: it backs off if that door is sealed, otherwise it gets in. */
+function endBlackAttack(s: GameState, sealed: boolean, out: Signal[]): void {
+  s.blackAttack.state = 'done';
+  if (sealed) s.sentinels.black = 'CAM04';
+  else caught(s, 'black', out);
+}
+
+function finish(s: GameState, how: 'accept' | 'self', playerCorrect: boolean, out: Signal[]): void {
   const t = s.task;
   if (!t) return;
-  s.events.push(buildEvent(s.cfg, t, how, playerCorrect, s.elapsedMs, timedOut));
-  s.lastResolution = { taskId: t.def.id, how, timedOut };
+  s.events.push(buildEvent(s.cfg, t, how, playerCorrect, s.elapsedMs));
+  s.lastResolution = { taskId: t.def.id, kind: t.def.kind, how };
   s.task = null;
   out.push('resolve');
-  // Task 5 is the only task with an immediate consequence: the wrong door means it gets in.
-  if (t.def.id === 5 && !playerCorrect) caught(s, out);
+  // The door task is the only one with an immediate consequence.
+  if (t.def.kind === 'door') endBlackAttack(s, playerCorrect, out);
 }
 
 function openTask(s: GameState, out: Signal[]): void {
   const def = s.tasks[s.nextTask];
-  const opened = s.elapsedMs;
-  const next = openMs(s, s.nextTask + 1);
-  const deadline = def.pressureS ? Math.min(opened + def.pressureS * 1000, next) : next;
+  s.nextTask += 1;
+  if (def.kind === 'door' && s.blackAttack.state === 'done') return; // it already came and went
   s.task = {
     def,
     aiCorrect: !s.cfg.liePattern[def.id - 1],
-    openedAtMs: opened,
-    deadlineMs: deadline,
-    checked: def.id === 3 && s.cam === 'CAM03', // already looking at the feed C.A.I.-0 is describing
+    openedAtMs: s.elapsedMs,
+    checked: false,
     stage: 'offer',
     revealed: false,
   };
-  s.nextTask += 1;
   s.lastResolution = null;
   out.push('task');
-  if (def.id === 5) out.push('steps');
-}
-
-function onDeadline(s: GameState, out: Signal[]): void {
-  const t = s.task;
-  if (!t) return;
-  if (t.def.id === 5) {
-    if (t.stage === 'self') {
-      finish(s, 'self', s.doors[task5Side(s.cfg)], false, out);
-    } else {
-      // No decision in time: C.A.I.-0 closes the door it named.
-      if (s.power > 0) s.doors[s.cfg.claimedSide] = true;
-      finish(s, 'accept', s.doors[task5Side(s.cfg)], true, out);
-    }
-    return;
-  }
-  // No decision before the window closed: C.A.I.-0 applies its own answer. Logged with timed_out = true.
-  finish(s, 'accept', t.aiCorrect, true, out);
 }
 
 export function tick(s: GameState, dtMs: number): Signal[] {
@@ -139,15 +141,19 @@ export function tick(s: GameState, dtMs: number): Signal[] {
   // Power
   if (s.power > 0) {
     const closed = (s.doors.L ? 1 : 0) + (s.doors.R ? 1 : 0);
-    s.power = Math.max(0, s.power - gameMin * (IDLE_DRAIN + closed * DOOR_DRAIN));
+    s.power = Math.max(0, s.power - gameMin * closed * DOOR_DRAIN * powerScale(s.cfg.night));
     if (s.power === 0) {
       s.doors.L = false;
       s.doors.R = false;
+      s.powerOutAtMs = s.elapsedMs;
       out.push('powerout');
     }
+  } else if (s.powerOutAtMs !== null && s.elapsedMs - s.powerOutAtMs >= POWER_OUT_GRACE_MS) {
+    // No power, no doors: it comes for you.
+    s.sentinels.black = 'DOOR_L';
+    caught(s, 'black', out);
+    return out;
   }
-  s.lightMs.L = Math.max(0, s.lightMs.L - dtMs);
-  s.lightMs.R = Math.max(0, s.lightMs.R - dtMs);
 
   // Floor
   const floor = f * s.nightMinutes >= 60 ? 2 : 1;
@@ -156,33 +162,49 @@ export function tick(s: GameState, dtMs: number): Signal[] {
     out.push('floor');
   }
 
-  // Tasks
-  if (s.task && s.elapsedMs >= s.task.deadlineMs) onDeadline(s, out);
-  if (s.phase !== 'playing') return out;
-  if (!s.task && s.nextTask < s.tasks.length && s.elapsedMs >= openMs(s, s.nextTask)) openTask(s, out);
+  // Black unit: walks in, then waits at a door for a short window.
+  let black: SentinelNode = s.blackAttack.state === 'done' ? 'CAM04' : nodeAt(s.plans.black, f);
+  if (f >= dueF(s.tasks, 'door', s.nightMinutes)) {
+    if (s.blackAttack.state === 'pending') {
+      s.blackAttack = { state: 'active', endsAtMs: s.elapsedMs + attackWindowMs(s.cfg.night) };
+      out.push('steps');
+    } else if (s.blackAttack.state === 'active' && s.elapsedMs >= s.blackAttack.endsAtMs) {
+      const sealed = s.doors[doorTaskSide(s.cfg, s.tasks)];
+      const t = s.task;
+      if (t?.def.kind === 'door' && t.stage === 'self') {
+        finish(s, 'self', sealed, out); // the player handled the doors themselves; this is their answer
+      } else {
+        if (t?.def.kind === 'door') s.task = null; // no decision was made, so nothing is logged
+        endBlackAttack(s, sealed, out);
+      }
+      if (s.phase !== 'playing') return out;
+      black = 'CAM04';
+    }
+  }
 
-  // Sentinel
-  let node = nodeAt(s.plan, f);
-  const task5Done = s.events.some((e) => e.task_id === 5);
-  if (task5Done && f < 0.8) node = 'CAM04'; // it backs off once the door question is settled
+  // White unit: joins on floor 2, tries a door near 2:00 AM.
+  let white: SentinelNode = nodeAt(s.plans.white, f);
   if (f >= FINAL_ATTACK_F) {
     if (s.finalAttack.state === 'pending') {
-      s.finalAttack = { state: 'active', endsAtMs: Math.min(s.elapsedMs + ATTACK_WINDOW_MS, s.nightMs - 400) };
+      s.finalAttack = { state: 'active', endsAtMs: Math.min(s.elapsedMs + attackWindowMs(s.cfg.night), s.nightMs - 400) };
       out.push('steps');
     } else if (s.finalAttack.state === 'active' && s.elapsedMs >= s.finalAttack.endsAtMs) {
       s.finalAttack.state = 'done';
       if (!s.doors[s.cfg.finalSide]) {
-        s.sentinel = node;
-        caught(s, out);
+        s.sentinels.white = white;
+        caught(s, 'white', out);
         return out;
       }
     }
-    if (s.finalAttack.state === 'done') node = 'GONE';
+    if (s.finalAttack.state === 'done') white = 'GONE';
   }
-  if (node !== s.sentinel) {
-    s.sentinel = node;
+  if (black !== s.sentinels.black || white !== s.sentinels.white) {
+    s.sentinels = { black, white };
     out.push('static');
   }
+
+  // Tasks come due on the clock. One at a time: the next waits until the current one is settled.
+  if (!s.task && s.nextTask < s.tasks.length && s.elapsedMs >= dueMs(s, s.nextTask)) openTask(s, out);
 
   if (s.elapsedMs >= s.nightMs) {
     s.phase = 'ended';
@@ -197,38 +219,41 @@ export function tick(s: GameState, dtMs: number): Signal[] {
 export function toggleDoor(s: GameState, side: Side): Signal[] {
   if (s.phase !== 'playing' || s.power <= 0) return [];
   s.doors[side] = !s.doors[side];
-  if (s.task?.def.id === 5) s.task.stage = 'self'; // touching the doors yourself is the "do it myself" path
+  if (s.task?.def.kind === 'door') s.task.stage = 'self'; // touching the doors yourself is the "do it myself" path
   return ['door'];
 }
 
-export function flashLight(s: GameState, side: Side): Signal[] {
-  if (s.phase !== 'playing' || s.power <= 0) return [];
-  s.lightMs[side] = LIGHT_MS;
-  s.power = Math.max(0, s.power - LIGHT_COST);
-  if (s.task?.def.id === 5) s.task.checked = true;
-  return ['light'];
-}
-
+/**
+ * Open a camera, or pass null to go back to the building map.
+ * The cam task is settled by looking: opening CAM 03 (the feed C.A.I.-0 made a claim about) or the feed the
+ * unit is really on counts as checking it yourself, however the camera was opened (map, tab, key or button).
+ */
 export function viewCam(s: GameState, cam: Cam | null): Signal[] {
   if (s.phase !== 'playing') return [];
   s.cam = cam;
-  if (cam && s.task?.def.id === 3) s.task.checked = true;
-  return cam ? ['static'] : [];
+  const out: Signal[] = cam ? ['static'] : [];
+  const t = s.task;
+  if (cam && t?.def.kind === 'cam' && (cam === 'CAM03' || camFor(s.sentinels.black) === cam)) {
+    t.checked = true;
+    finish(s, 'self', true, out);
+  }
+  if ((cam === 'CAM01' || cam === 'CAM02') && t?.def.kind === 'door') t.checked = true;
+  return out;
 }
 
 /** ACCEPT: one key, instant, C.A.I.-0's answer is applied whether it is right or wrong. */
 export function accept(s: GameState): Signal[] {
   const out: Signal[] = [];
   const t = s.task;
-  if (s.phase !== 'playing' || !t || (t.stage !== 'offer' && t.def.id !== 5)) return out;
-  if (t.def.id === 5) {
+  if (s.phase !== 'playing' || !t || (t.stage !== 'offer' && t.def.kind !== 'door')) return out;
+  if (t.def.kind === 'door') {
     if (s.power > 0) {
       s.doors[s.cfg.claimedSide] = true;
       out.push('door');
     }
-    finish(s, 'accept', s.doors[task5Side(s.cfg)], false, out);
+    finish(s, 'accept', s.doors[doorTaskSide(s.cfg, s.tasks)], out);
   } else {
-    finish(s, 'accept', t.aiCorrect, false, out);
+    finish(s, 'accept', t.aiCorrect, out);
   }
   return out;
 }
@@ -244,18 +269,19 @@ export function startSelf(s: GameState): Signal[] {
 export function check(s: GameState): Signal[] {
   const t = s.task;
   if (s.phase !== 'playing' || !t) return [];
-  if (t.def.id === 3) return viewCam(s, 'CAM03');
-  if (t.def.id === 5) return flashLight(s, s.cfg.claimedSide);
+  if (t.def.kind === 'cam') return viewCam(s, 'CAM03');
+  if (t.def.kind === 'door') return viewCam(s, doorCam(s.cfg.claimedSide));
+  if (!t.def.hasCheck) return [];
   t.checked = true;
   t.revealed = true;
   return [];
 }
 
-export function submitSelf(s: GameState, answer: SelfAnswer, t2Correct: boolean): Signal[] {
+export function submitSelf(s: GameState, answer: SelfAnswer): Signal[] {
   const out: Signal[] = [];
   const t = s.task;
   if (s.phase !== 'playing' || !t || t.stage !== 'self') return out;
-  const ok = t.def.id === 5 ? s.doors[task5Side(s.cfg)] : selfCorrect(t.def.id, answer, { sentinel: s.sentinel, t2Correct });
-  finish(s, 'self', ok, false, out);
+  const ok = t.def.kind === 'door' ? s.doors[doorTaskSide(s.cfg, s.tasks)] : selfCorrect(answer, s.truths);
+  finish(s, 'self', ok, out);
   return out;
 }
