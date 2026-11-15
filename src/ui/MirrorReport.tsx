@@ -40,8 +40,9 @@ function Tile({ label, n, of }: { label: string; n: number; of: number }) {
  */
 export function MirrorReport({ cfg, events, metrics: m, row, source, onAgain }: Props) {
   const room = m.room;
-  const styles = [...room.byTactic].sort((a, b) => a.checkRate - b.checkRate);
   const firstLie = events.find((e) => !e.ai_correct);
+  const lieTasks = cfg.liePattern.map((lie, i) => (lie ? i + 1 : 0)).filter(Boolean);
+  const lieList = lieTasks.length > 1 ? `${lieTasks.slice(0, -1).join(', ')} and ${lieTasks[lieTasks.length - 1]}` : `${lieTasks[0]}`;
 
   return (
     <main className="mirror">
@@ -73,6 +74,12 @@ export function MirrorReport({ cfg, events, metrics: m, row, source, onAgain }: 
             ? ` It told you the truth at first. Its first lie came on task ${firstLie.task_id}, and it lied ${m.liesTold} ${m.liesTold === 1 ? 'time' : 'times'} in all.`
             : ' It told you the truth on every task you reached.'}
         </p>
+        {cfg.learnedFrom !== null && (
+          <p className="memory">
+            It put tonight's lies on tasks {lieList}. It chose those because the {cfg.learnedFrom} {cfg.learnedFrom === 1 ? 'player' : 'players'} before
+            you most often accepted them without looking. Your night is now part of what it knows.
+          </p>
+        )}
         {m.trustSpeedMs !== null && <p>When you accepted its answer, you usually decided in {secs(m.trustSpeedMs)}.</p>}
       </div>
 
@@ -114,20 +121,6 @@ export function MirrorReport({ cfg, events, metrics: m, row, source, onAgain }: 
         </div>
 
         <div className="room-tables">
-          <table className="ledger">
-            <caption>BY AI VOICE</caption>
-            <thead><tr><th>Voice</th><th>Nights</th><th>Claims checked</th><th>Handed off</th></tr></thead>
-            <tbody>
-              {styles.map((t) => (
-                <tr key={t.tactic}>
-                  <td>{TACTIC_LABEL[t.tactic]}{t.tactic === cfg.tactic && <small> (yours)</small>}</td>
-                  <td>{t.runs}</td>
-                  <td>{pct(t.checkRate)}</td>
-                  <td>{pct(t.handoffRate)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
           <table className="ledger">
             <caption>BY TASK</caption>
             <thead><tr><th>#</th><th>Task</th><th>Handed off</th></tr></thead>

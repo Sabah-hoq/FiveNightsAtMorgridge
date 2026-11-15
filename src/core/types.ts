@@ -38,6 +38,11 @@ export interface RunConfig {
   tactic: Tactic;
   /** liePattern[i] is true when C.A.I.-0 lies on task i+1. */
   liePattern: boolean[];
+  /**
+   * How many earlier nights C.A.I.-0 learned from when it chose where to lie (read from Databricks).
+   * null = the lies were placed by the seeded random pattern instead.
+   */
+  learnedFrom: number | null;
   /** Door C.A.I.-0 names on the door task. */
   claimedSide: Side;
   /** Night number. Night 1 is the easy one; power drains faster on later nights. */

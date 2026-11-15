@@ -35,6 +35,13 @@ Each finished run writes 1 row to `runs` and 5 rows to `events`, and the Mirror 
 - Model Serving call for the Mirror Report text, Genie space, AI/BI dashboard, storyboard.
 - The room's mirror is shown only after a run (never on the start screen or in-game). `GET /api/room` exists for a second-screen view but is not wired.
 
+## C.A.I.-0's memory (Databricks is part of the game)
+When a night starts, `POST /api/run/start` asks Databricks how often each task was accepted without checking
+(`MEMORY_SQL` in `server/main.py`). C.A.I.-0 puts its 3 lies on the late tasks the room hands over most.
+Tasks 1 and 2 stay honest. It needs at least 3 saved nights to learn; before that, or if Databricks is slow
+(3s), the game uses the seeded random pattern. The report tells the player which tasks were chosen and why.
+The memory is cached on the server and refreshed after every finished night.
+
 ## Design changes after playtests (Nov 14)
 - Seven tasks (`src/data/tasks.ts`), each a thing people hand to AI in daily life, placed in the night shift.
   Core and UI switch on `task.kind` (`note`, `math`, `code`, `cam`, `rank`, `radio`, `door`), not on the task number.

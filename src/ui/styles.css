@@ -335,3 +335,6 @@ kbd {
 .cert-note { font-size: 13px; color: var(--rec); }
 .mirror-title { display: grid; gap: 0; }
 .logo.small { font-size: clamp(30px, 5vw, 46px); line-height: .9; }
+
+.memory { border-left: 2px solid var(--ai); padding-left: 12px; }
+.begin:disabled { opacity: .7; cursor: progress; }

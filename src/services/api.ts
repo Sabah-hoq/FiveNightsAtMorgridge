@@ -1,5 +1,5 @@
 import { computeMirror } from '../core/metrics';
-import { lieString, makeRunConfig, newRunId } from '../core/seed';
+import { makeRunConfig, newRunId, parseLiePattern } from '../core/seed';
 import type { CohortRun, GameEvent, MirrorMetrics, Mode, RunConfig, RunRow, TaskKind } from '../core/types';
 import { fillLine, OFFER_LINES } from '../data/fallbackLines';
 import { seedCohort } from '../data/seedCohort';
@@ -50,18 +50,23 @@ export function localLines(cfg: RunConfig): Record<TaskKind, string> {
 
 export async function startRun(mode: Mode, alias: string | null): Promise<RunStart> {
   const cfg = makeRunConfig(newRunId(), mode, alias, Date.now());
+  let source: RunStart['source'] = 'fallback';
   if (API) {
     try {
-      // Backend may override tactic + lines (one Model Serving call). Lie pattern stays seeded from run_id.
-      const r = await post<{ tactic?: RunConfig['tactic']; lines?: Record<TaskKind, string> }>(
-        '/api/run/start', { run_id: cfg.runId, mode, lie_pattern: lieString(cfg.liePattern), claimed_side: cfg.claimedSide }, 2500);
-      if (r.tactic) cfg.tactic = r.tactic;
-      if (r.lines) return { cfg, lines: r.lines, source: 'backend' };
+      // The backend asks Databricks where earlier players stopped looking and puts tonight's lies there.
+      const r = await post<{ lie_pattern?: string; learned_from?: number }>(
+        '/api/run/start', { run_id: cfg.runId, task_count: TASKS.length }, 3000);
+      const learned = parseLiePattern(r.lie_pattern, TASKS.length);
+      if (learned && typeof r.learned_from === 'number') {
+        cfg.liePattern = learned;
+        cfg.learnedFrom = r.learned_from;
+      }
+      source = 'backend';
     } catch {
-      /* fall through to local lines */
+      /* backend slow or down: keep the seeded pattern */
     }
   }
-  return { cfg, lines: localLines(cfg), source: 'fallback' };
+  return { cfg, lines: localLines(cfg), source };
 }
 
 const queue: GameEvent[] = [];

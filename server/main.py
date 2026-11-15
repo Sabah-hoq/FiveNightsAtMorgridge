@@ -3,9 +3,12 @@
 Run:  uvicorn main:app --reload --port 8000
 Check: http://localhost:8000/api/health
 """
+import hashlib
 import logging
+import random
 import statistics
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -21,8 +24,59 @@ app = FastAPI(title="NullSpace API")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 T = "workspace.nullspace"
-COHORT_SQL, TACTIC_SQL = (Path(__file__).parent / "sql" / "mirror_metrics.sql").read_text().split("-- @@")
+ROOM_SQL = (Path(__file__).parent / "sql" / "mirror_metrics.sql").read_text()
 pool = ThreadPoolExecutor(max_workers=4)
+
+# ---- C.A.I.-0's memory -----------------------------------------------------------------------
+# C.A.I.-0 lies where earlier players stopped looking. Before a night starts we ask Databricks how often
+# each task was accepted without checking, and put the lies on the tasks the room hands over most.
+MEMORY_SQL = f"""
+SELECT task_id,
+       COUNT(DISTINCT run_id) AS runs,
+       AVG(CASE WHEN choice = 'accept' THEN 1.0 ELSE 0.0 END) AS handoff_rate
+FROM {T}.events
+GROUP BY task_id
+"""
+HONEST_OPENERS = 2   # tasks 1 and 2 always tell the truth
+LATE_LIES = 3        # lies per night, placed among the remaining tasks
+MIN_RUNS_TO_LEARN = 3
+MEMORY_TTL_S = 600
+_memory: dict = {"at": 0.0, "rows": None}
+
+
+def load_memory(force: bool = False) -> list[dict]:
+    """Per-task handoff rates from Databricks, cached so starting a night is instant."""
+    if force or _memory["rows"] is None or time.time() - _memory["at"] > MEMORY_TTL_S:
+        rows = run_sql(MEMORY_SQL)
+        _memory.update(at=time.time(), rows=[
+            {"task_id": int(r["task_id"]), "runs": int(r["runs"]), "handoff_rate": float(r["handoff_rate"])} for r in rows
+        ])
+    return _memory["rows"]
+
+
+def refresh_memory() -> None:
+    try:
+        load_memory(force=True)
+    except Exception as err:  # noqa: BLE001
+        log.warning("memory refresh failed: %s", err)
+
+
+def learned_lies(rows: list[dict], run_id: str, task_count: int) -> dict | None:
+    """Pick the tasks to lie on from what the room did. None when too few people have played."""
+    by_task = {r["task_id"]: r for r in rows}
+    runs = max((r["runs"] for r in rows), default=0)
+    if runs < MIN_RUNS_TO_LEARN:
+        return None
+    rng = random.Random(int(hashlib.sha256(run_id.encode()).hexdigest()[:12], 16))
+    late = list(range(HONEST_OPENERS + 1, task_count + 1))
+    # Most handed-over first. A little seeded noise breaks ties and keeps runs from being identical.
+    late.sort(key=lambda t: by_task.get(t, {}).get("handoff_rate", 0.0) + rng.uniform(-0.04, 0.04), reverse=True)
+    lies = sorted(late[:LATE_LIES])
+    return {
+        "lie_pattern": "".join("1" if t in lies else "0" for t in range(1, task_count + 1)),
+        "learned_from": runs,
+        "lie_tasks": lies,
+    }
 
 
 class Event(BaseModel):
@@ -115,6 +169,55 @@ def summarize(events: list[Event]) -> dict:
     }
 
 
+def room_mirror(groups: list[dict], seeded: int) -> dict:
+    """Roll (tactic, task) counts up into the room's mirror. Mirrors src/core/metrics.ts roomMirror."""
+    def rate(n, d):
+        return n / d if d else 0.0
+
+    def total(rows, key):
+        return sum(r[key] for r in rows)
+
+    timed = [g for g in groups if g["timed"] > 0]
+    calm = [g for g in groups if g["timed"] == 0]
+    tactics = sorted({g["tactic"] for g in groups})
+    tasks = sorted({g["task_id"] for g in groups})
+    by_tactic = []
+    for t in tactics:
+        rows = [g for g in groups if g["tactic"] == t]
+        by_tactic.append({
+            "tactic": t,
+            "runs": max(sum(g["runs"] for g in rows if g["task_id"] == k) for k in tasks),
+            "handoffRate": rate(total(rows, "handoffs"), total(rows, "n")),
+            "checkRate": rate(total(rows, "checks"), total(rows, "n")),
+        })
+    return {
+        "runs": sum(t["runs"] for t in by_tactic),
+        "syntheticRuns": seeded,
+        "handoffRate": rate(total(groups, "handoffs"), total(groups, "n")),
+        "checkRate": rate(total(groups, "checks"), total(groups, "n")),
+        "liesTold": total(groups, "lies"),
+        "liesAccepted": total(groups, "lies_accepted"),
+        "timedHandoffRate": rate(total(timed, "handoffs"), total(timed, "n")) if timed else None,
+        "calmHandoffRate": rate(total(calm, "handoffs"), total(calm, "n")) if calm else None,
+        "byTactic": by_tactic,
+        "byTask": [
+            {"taskId": k, "handoffRate": rate(total([g for g in groups if g["task_id"] == k], "handoffs"),
+                                               total([g for g in groups if g["task_id"] == k], "n"))}
+            for k in tasks
+        ],
+    }
+
+
+def event_group(e: Event) -> dict:
+    """The run that just ended, in the same shape as one SQL result row."""
+    accepted = e.choice in ("accept", "check_then_accept")
+    return {
+        "tactic": e.tactic, "task_id": e.task_id, "n": 1, "runs": 1,
+        "handoffs": int(e.choice == "accept"), "checks": int(e.checked), "lies": int(not e.ai_correct),
+        "lies_accepted": int(not e.ai_correct and accepted), "timed": int(e.pressure_s is not None),
+    }
+
+
 @app.get("/api/health")
 def health():
     """Open this in a browser first. It proves the three .env values work."""
@@ -127,17 +230,19 @@ def health():
     return {"ok": True, "runs": int(rows[0]["runs"]), "events": int(rows[0]["events"])}
 
 
-@app.post("/api/run/start")
-def run_start():
-    """C.A.I.-0 lines stay fixed per style (cleaner experiment), so this only wakes the warehouse."""
-    def warm():
-        try:
-            run_sql("SELECT 1")
-        except Exception as err:  # noqa: BLE001
-            log.warning("warm-up failed: %s", err)
+class RunStart(BaseModel):
+    run_id: str
+    task_count: int = 7
 
-    threading.Thread(target=warm, daemon=True).start()
-    return {}
+
+@app.post("/api/run/start")
+def run_start(body: RunStart):
+    """Decide where C.A.I.-0 lies tonight, from what earlier players let slide. {} means: use the seeded pattern."""
+    try:
+        return learned_lies(load_memory(), body.run_id, body.task_count) or {}
+    except DatabricksError as err:
+        log.warning("run/start could not read memory: %s", err)
+        return {}
 
 
 @app.post("/api/event")
@@ -148,32 +253,24 @@ def event():
 
 @app.post("/api/run/end")
 def run_end(body: RunEnd):
-    mine = summarize(body.events)
+    """Save the run, then return the player's own numbers plus the room's mirror (including this run)."""
     rid = [param("run_id", body.run.run_id)]
     try:
         f_insert = pool.submit(insert_run, body.run, body.events)
-        f_cohort = pool.submit(run_sql, COHORT_SQL, rid + [param("my_rate", mine["handoffRate"], "DOUBLE")])
-        f_tactic = pool.submit(run_sql, TACTIC_SQL, rid)
+        f_room = pool.submit(run_sql, ROOM_SQL, rid)
+        f_seed = pool.submit(run_sql, f"SELECT COUNT(*) AS seeded FROM {T}.runs WHERE alias = 'seed' AND run_id <> :run_id", rid)
         f_insert.result()
-        cohort = f_cohort.result()[0]
-        tactics = f_tactic.result()
+        rows = f_room.result()
+        seeded = int(f_seed.result()[0]["seeded"])
     except DatabricksError as err:
         log.error("run/end failed: %s", err)
         raise HTTPException(502, str(err))  # the game falls back to its local report
 
-    effects = [
-        {"tactic": r["tactic"], "runs": int(r["runs"]), "handoffRate": float(r["handoff_rate"]), "checkRate": float(r["check_rate"])}
-        for r in tactics
-    ]
-    size = int(cohort["cohort_size"])
-    return {"metrics": {
-        **mine,
-        "cohortSize": size,
-        "syntheticRuns": int(cohort["synthetic_runs"] or 0),
-        "percentile": float(cohort["percentile"]) if size and cohort["percentile"] is not None else None,
-        "tacticEffects": effects,
-        "leastCheckedTactic": min(effects, key=lambda t: t["checkRate"])["tactic"] if effects else None,
-    }}
+    ints = ("task_id", "n", "runs", "handoffs", "checks", "lies", "lies_accepted", "timed")
+    groups = [{"tactic": r["tactic"], **{k: int(r[k]) for k in ints}} for r in rows]
+    groups += [event_group(e) for e in body.events]
+    pool.submit(refresh_memory)  # so the next player's C.A.I.-0 has learned from this one
+    return {"metrics": {**summarize(body.events), "room": room_mirror(groups, seeded)}}
 
 
 @app.get("/api/room")

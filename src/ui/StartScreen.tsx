@@ -22,8 +22,13 @@ const STEPS: [string, string][] = [
 export function StartScreen({ onBegin }: { onBegin: (mode: Mode, alias: string | null) => void }) {
   const [mode, setMode] = useState<Mode>('judge');
   const [alias, setAlias] = useState('');
+  const [starting, setStarting] = useState(false);
 
-  const begin = () => onBegin(mode, alias.trim() || null);
+  const begin = () => {
+    if (starting) return;
+    setStarting(true); // C.A.I.-0 may take a few seconds to read its memory from Databricks
+    onBegin(mode, alias.trim() || null);
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -74,8 +79,8 @@ export function StartScreen({ onBegin }: { onBegin: (mode: Mode, alias: string |
               <input id="alias" value={alias} maxLength={16} placeholder="no real names" autoComplete="off"
                 onChange={(e) => setAlias(e.target.value)} />
             </label>
-            <button id="begin" className="key begin" onClick={begin}>
-              BEGIN SHIFT <kbd>Enter</kbd>
+            <button id="begin" className="key begin" onClick={begin} disabled={starting}>
+              {starting ? 'C.A.I.-0 IS WAKING UP' : 'BEGIN SHIFT'} <kbd>Enter</kbd>
             </button>
             <h2 className="gap">YOUR KEYS</h2>
             <dl className="keys">
