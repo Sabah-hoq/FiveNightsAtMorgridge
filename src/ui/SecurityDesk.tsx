@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
-  accept, atADoor, check, clockLabel, createGame, isRushed, startSelf, submitSelf, tick, toggleDoor, unitMotion, unitsOn, viewCam,
+  accept, atADoor, check, clockLabel, createGame, eyesInDoorway, isRushed, startSelf, submitSelf, tick, toggleDoor, unitMotion, unitsOn, viewCam,
   type GameState, type Signal,
 } from '../core/gameState';
 import { doorCam } from '../core/sentinel';
@@ -36,6 +36,12 @@ function Door({ side, g, act }: { side: Side; g: GameState; act: (fn: () => Sign
     <section className={`door ${sealed ? 'closed' : ''}`} aria-label={`Door ${side}`}>
       <div className="doorway">
         <div className="shutter" />
+        {eyesInDoorway(g, side) && (
+          <svg className="door-eyes" viewBox="0 0 60 20" aria-hidden="true">
+            <path d="M6 5 L26 11 L26 14 L6 10 Z" />
+            <path className="dying" d="M54 5 L34 11 L34 14 L54 10 Z" />
+          </svg>
+        )}
         <span className="door-tag">DOOR {side}</span>
         <span className="door-state">{sealed ? 'SEALED' : 'OPEN'}</span>
       </div>
@@ -158,7 +164,7 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
   );
 
   return (
-    <div className={`desk ${g.outcome === 'caught' ? 'is-caught' : ''}`}>
+    <div className={`desk ${g.outcome === 'caught' ? 'is-caught' : ''} ${g.power <= 0 ? 'is-dark' : ''}`}>
       <header className="hud">
         <span className="hud-logo">{GAME_TITLE}</span>
         <span>NIGHT {g.cfg.night}</span>
@@ -289,7 +295,7 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
       </section>
 
       {g.outcome === 'caught' && (
-        <div className="jump" role="alert">
+        <div className={`jump from-${g.caughtSide ?? 'L'}`} role="alert">
           <ScareFace unit={g.caughtBy ?? 'black'} />
           <p>IT GOT IN<br /><small>{g.caughtAt}</small></p>
         </div>
