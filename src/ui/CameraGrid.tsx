@@ -26,13 +26,26 @@ export const CAMS: { id: Cam; key: string; label: string; place: string; src: st
 ];
 
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
-/** One lap of pacing: walk one way, stand, walk back, stand. */
-const PACE_MS = 9000;
+const TAU = 2 * Math.PI;
+/** Every LURCH_MS it slows to a dead stop, then lurches forward at up to twice its usual speed. */
+const LURCH_MS = 6400;
 
-/** Side-to-side wander, -1 to 1, with a pause at each end. `moving` is false while it stands still. */
-function pacing(tMs: number, phase: number): { x: number; moving: boolean } {
-  const raw = 1.7 * Math.sin((tMs / PACE_MS + phase) * 2 * Math.PI);
-  return { x: Math.max(-1, Math.min(1, raw)), moving: Math.abs(raw) < 1 };
+/** Its own sense of time: it stalls and surges instead of ticking evenly. */
+const warped = (tMs: number, phase: number): number =>
+  tMs + (LURCH_MS / TAU) * Math.sin((tMs / LURCH_MS + phase) * TAU);
+
+/** Smooth wander between -1 and 1 that never quite repeats. `seed` gives each unit and each axis its own path. */
+function drift(tMs: number, seed: number): number {
+  const t = tMs / 1000;
+  return (Math.sin(t * 0.57 + seed * 9.1) + 0.55 * Math.sin(t * 1.31 + seed * 4.3) + 0.15 * Math.sin(t * 3.3 + seed * 7.7)) / 1.7;
+}
+
+/** Where it is wandering right now: side to side (x), toward and away from the lens (z), and how fast (per second). */
+function wander(tMs: number, index: number): { x: number; z: number; vx: number } {
+  const phase = index * 0.37;
+  const now = warped(tMs, phase);
+  const x = drift(now, 1 + index);
+  return { x, z: drift(now * 0.7, 5 + index), vx: (drift(warped(tMs + 120, phase), 1 + index) - x) / 0.12 };
 }
 
 /**
@@ -40,15 +53,21 @@ function pacing(tMs: number, phase: number): { x: number; moving: boolean } {
  * The eyes are the only colour on a feed. They are narrow slits, and one of them is failing.
  */
 function Figure({ unit, route, motion, tMs, index }: { unit: Unit; route: Route; motion: UnitMotion; tMs: number; index: number }) {
-  const d = motion.depth;
+  // Running at a door it comes straight on with a short weave. Otherwise it wanders in two directions:
+  // side to side, and a little toward and away from the lens. The wander shrinks as it gets close.
+  const w = motion.rushing ? { x: 0.18 * Math.sin(tMs / 55), z: 0, vx: 0 } : wander(tMs, index);
+  const d = Math.min(1, Math.max(0, motion.depth + w.z * 0.08));
   const height = lerp(route.far.height, route.near.height, d);
-  // Running at a door it comes straight on. Otherwise it wanders, and the wander shrinks as it gets close.
-  const pace = motion.rushing ? { x: 0, moving: true } : pacing(tMs, index * 0.37);
-  const left = lerp(route.far.left, route.near.left, d) + pace.x * route.pace * (1 - d * 0.6) + index * Math.max(6, height / 4);
+  const reach = route.pace * (1 - d * 0.6);
+  const left = lerp(route.far.left, route.near.left, d) + w.x * reach + index * Math.max(6, height / 4);
   const style = { left: `${left}%`, bottom: `${lerp(route.far.bottom, route.near.bottom, d)}%`, height: `${height}%` };
-  const gait = motion.rushing ? 'run' : pace.moving ? 'walk' : 'stand';
+  // Its speed across the screen picks the gait, and it leans into the direction it is heading.
+  const speed = Math.abs(w.vx) * reach;
+  const gait = motion.rushing ? 'run' : speed < 0.5 ? 'stand' : speed < 2 ? 'creep' : speed < 4.5 ? 'walk' : 'lurch';
+  const lean = motion.rushing ? 0 : Math.max(-11, Math.min(11, w.vx * reach * 2.2));
   return (
     <svg className={`figure ${unit} ${gait}`} style={style} viewBox="0 0 60 120" aria-label={`${unit} unit on camera`}>
+      <g className="lean" style={{ transform: `rotate(${lean.toFixed(1)}deg)` }}>
       <rect className="body leg a" x="20" y="76" width="6" height="44" rx="2" />
       <rect className="body leg b" x="34" y="76" width="6" height="44" rx="2" />
       <g className="torso">
@@ -65,6 +84,7 @@ function Figure({ unit, route, motion, tMs, index }: { unit: Unit; route: Route;
           <path className="eye dying" d="M39.5 19.5 L32 23 L32 25 L39.5 22.5 Z" />
           <path className="teeth" d="M22 28.5l2 2 2-2 2 2 2-2 2 2 2-2 2 2 2-2" />
         </g>
+      </g>
       </g>
     </svg>
   );

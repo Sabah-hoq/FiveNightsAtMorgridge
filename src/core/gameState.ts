@@ -48,6 +48,8 @@ export interface GameState {
 // Tuning. Rates are per in-game minute so both shift lengths drain the same per night.
 export const NIGHT_MS = { judge: 180_000, full: 300_000 } as const;
 /** Night 1: both doors sealed from 12:00 to 2:00 still leaves power. Each later night drains 35% faster. */
+/** How much faster the night clock runs while a task the room hesitates on is open. */
+export const RUSH_SCALE = 1.5;
 const DOOR_DRAIN = 0.48;
 /** An open camera feed draws a little power too: watching all night costs about 12% on night 1. The map is free. */
 export const CAM_DRAIN = 0.1;
@@ -71,6 +73,13 @@ export function createGame(cfg: RunConfig, tasks: TaskDef[], nightMinutes: numbe
     task: null, nextTask: 0, lastResolution: null, events: [],
   };
 }
+
+/**
+ * True while the open task is one C.A.I.-0 learned that players are slow to decide on.
+ * The door task is never rushed: its wait is already the shortest moment of the night.
+ */
+export const isRushed = (s: GameState): boolean =>
+  !!s.task && s.task.def.kind !== 'door' && s.cfg.rushTasks.includes(s.task.def.id);
 
 export const fraction = (s: GameState): number => Math.min(1, s.elapsedMs / s.nightMs);
 
@@ -161,6 +170,7 @@ function openTask(s: GameState, out: Signal[]): void {
     def,
     aiCorrect: !s.cfg.liePattern[def.id - 1],
     openedAtMs: s.elapsedMs,
+    realMs: 0,
     checked: false,
     stage: 'offer',
     revealed: false,
@@ -172,6 +182,8 @@ function openTask(s: GameState, out: Signal[]): void {
 export function tick(s: GameState, dtMs: number): Signal[] {
   const out: Signal[] = [];
   if (s.phase !== 'playing') return out;
+  if (s.task) s.task.realMs += dtMs; // decision time is measured in real time, before any speed-up
+  if (isRushed(s)) dtMs *= RUSH_SCALE;
   s.elapsedMs += dtMs;
   const f = fraction(s);
   const gameMin = (dtMs / s.nightMs) * s.nightMinutes;

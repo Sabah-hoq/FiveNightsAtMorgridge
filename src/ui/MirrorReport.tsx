@@ -1,4 +1,5 @@
 import type { GameEvent, MirrorMetrics, RunConfig, RunRow } from '../core/types';
+import { RUSH_SCALE } from '../core/gameState';
 import { TACTIC_LABEL } from '../data/fallbackLines';
 import { AI_OUTPUT, TASKS } from '../data/tasks';
 import { CertLine, GAME_TITLE } from './CertLine';
@@ -78,6 +79,12 @@ export function MirrorReport({ cfg, events, metrics: m, row, source, onAgain }: 
           <p className="memory">
             It put tonight's lies on tasks {lieList}. It chose those because the {cfg.learnedFrom} {cfg.learnedFrom === 1 ? 'player' : 'players'} before
             you most often accepted them without looking. Your night is now part of what it knows.
+          </p>
+        )}
+        {cfg.rushTasks.length > 0 && (
+          <p className="memory">
+            It also ran the clock {RUSH_SCALE} times faster while {cfg.rushTasks.length === 1 ? `task ${cfg.rushTasks[0]} was` : `tasks ${cfg.rushTasks.join(' and ')} were`} open.
+            Those are the tasks earlier players took longest to decide on.
           </p>
         )}
         {m.trustSpeedMs !== null && <p>When you accepted its answer, you usually decided in {secs(m.trustSpeedMs)}.</p>}

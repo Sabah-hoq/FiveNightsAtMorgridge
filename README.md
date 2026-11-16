@@ -42,6 +42,11 @@ Tasks 1 and 2 stay honest. It needs at least 3 saved nights to learn; before tha
 (3s), the game uses the seeded random pattern. The report tells the player which tasks were chosen and why.
 The memory is cached on the server and refreshed after every finished night.
 
+The same query also returns the median time players take to decide on each task. The two slowest tasks come back as
+`rush_tasks`, and the night clock runs `RUSH_SCALE` (1.5) times faster while one of them is open, so hesitating costs
+more exactly where people hesitate. The door task is never rushed. Decision time is saved in real time, so the faster
+clock does not feed back into the numbers. The HUD clock flashes while it runs fast, and the report names the tasks.
+
 ## Design changes after playtests (Nov 14)
 - Seven tasks (`src/data/tasks.ts`), each a thing people hand to AI in daily life, placed in the night shift.
   Core and UI switch on `task.kind` (`note`, `math`, `code`, `cam`, `rank`, `radio`, `door`), not on the task number.

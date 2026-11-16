@@ -57,13 +57,19 @@ export function makeRunConfig(runId: string, mode: Mode, alias: string | null, s
   const claimedSide: Side = r() < 0.5 ? 'L' : 'R';
   const finalSide: Side = r() < 0.5 ? 'L' : 'R';
   const jitter = (r() - 0.5) * 0.04;
-  return { runId, mode, night, tactic, liePattern: liePatternFor(runId), learnedFrom: null, claimedSide, finalSide, jitter, alias, startedAt };
+  return { runId, mode, night, tactic, liePattern: liePatternFor(runId), learnedFrom: null, rushTasks: [], claimedSide, finalSide, jitter, alias, startedAt };
 }
 
 /** Accept a lie pattern from the backend only if it is well formed and keeps the first two tasks honest. */
 export function parseLiePattern(p: unknown, count = TASK_COUNT): boolean[] | null {
   if (typeof p !== 'string' || p.length !== count || !/^[01]+$/.test(p) || p.startsWith('1') || p[1] === '1') return null;
   return [...p].map((c) => c === '1');
+}
+
+/** Accept rushed task ids from the backend only if they are real task numbers. At most two. */
+export function parseRushTasks(v: unknown, count = TASK_COUNT): number[] {
+  if (!Array.isArray(v)) return [];
+  return [...new Set(v.filter((t): t is number => Number.isInteger(t) && t >= 1 && t <= count))].slice(0, 2);
 }
 
 export const lieString = (p: boolean[]): string => p.map((x) => (x ? '1' : '0')).join('');

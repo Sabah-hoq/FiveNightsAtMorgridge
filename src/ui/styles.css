@@ -119,6 +119,7 @@ kbd {
 }
 .hud-logo { color: var(--ink); letter-spacing: 2px; }
 .hud-clock { color: var(--ink); font-size: 28px; min-width: 92px; font-variant-numeric: tabular-nums; }
+.hud-clock.rushing { color: var(--warn); text-shadow: 2px 0 var(--rec); animation: blink .5s steps(1) infinite; }
 .power { display: flex; align-items: center; gap: 8px; color: var(--ink); margin-left: auto; }
 .power i { display: block; width: 120px; height: 10px; border: 1px solid var(--dim); }
 .power b { display: block; height: 100%; background: var(--ink); }
@@ -151,7 +152,22 @@ kbd {
 .screen { position: relative; overflow: hidden; background: #020203; border: 2px solid var(--line); border-radius: 3px; min-height: 180px; }
 .feed { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: contrast(1.2) brightness(.62); }
 .figure { position: absolute; transform: translateX(-50%); filter: drop-shadow(0 0 6px #000); overflow: visible; transition: left .12s linear, bottom .12s linear, height .12s linear; }
-/* Walk cycle: the legs take turns shortening and the body bobs. Running is the same cycle, faster and leaning in. */
+/* Gaits: creep, walk and lurch swing the legs from the hip at rising speed; run is the sprint at a door. Standing, it sways. */
+.figure .lean { transform-box: fill-box; transform-origin: 50% 100%; transition: transform .3s ease-out; }
+.figure.creep .leg { animation: stride 1.1s ease-in-out infinite; }
+.figure.creep .leg.b { animation-delay: -.55s; }
+.figure.creep .torso { animation: bob .55s ease-in-out infinite; }
+.figure.creep .arm { animation: swing 2.2s ease-in-out infinite; }
+.figure.lurch .leg { animation: stride .36s ease-in-out infinite; }
+.figure.lurch .leg.b { animation-delay: -.18s; }
+.figure.lurch .torso { animation: bob-run .18s ease-in-out infinite; }
+.figure.lurch .arm { animation: swing .72s ease-in-out infinite; }
+.figure.lurch .arm.b { animation-delay: -.36s; }
+.figure.stand .torso { animation: sway 3.6s ease-in-out infinite; }
+@keyframes sway { 0%, 100% { transform: rotate(-1.6deg); } 50% { transform: rotate(1.8deg) translateY(1px); } }
+/* The feed drops a frame now and then: it is gone for an instant. */
+.figure { animation: dropframe 7.9s steps(1) infinite; }
+@keyframes dropframe { 0%, 100% { opacity: 1; } 37% { opacity: 0; } 37.9% { opacity: 1; } 81% { opacity: .35; } 81.6% { opacity: 1; } }
 .figure .leg, .figure .torso { transform-box: fill-box; }
 .figure .leg { transform-origin: 50% 0; }
 .figure .torso { transform-origin: 50% 100%; }
@@ -161,7 +177,7 @@ kbd {
 .figure.run .leg { animation: stride .26s ease-in-out infinite; }
 .figure.run .leg.b { animation-delay: -.13s; }
 .figure.run .torso { animation: bob-run .13s ease-in-out infinite; }
-@keyframes stride { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.62); } }
+@keyframes stride { 0%, 100% { transform: rotate(-15deg) scaleY(1); } 25% { transform: rotate(0deg) scaleY(.8); } 50% { transform: rotate(15deg) scaleY(1); } 75% { transform: rotate(0deg) scaleY(1); } }
 @keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(2px); } }
 @keyframes bob-run { 0%, 100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(4px) rotate(3deg); } }
 .power-cam { color: var(--warn); font-size: .7em; letter-spacing: 1px; }
@@ -186,7 +202,7 @@ kbd {
 .figure.walk .arm.b { animation-delay: -.62s; }
 .figure.run .arm { animation: reach .26s ease-in-out infinite; }
 .figure.run .head { animation: none; transform: rotate(0deg); }
-@keyframes swing { 0%, 100% { transform: rotate(5deg); } 50% { transform: rotate(-5deg); } }
+@keyframes swing { 0%, 100% { transform: rotate(11deg); } 50% { transform: rotate(-11deg); } }
 @keyframes reach { 0%, 100% { transform: rotate(-22deg) scaleY(.92); } 50% { transform: rotate(-30deg) scaleY(.86); } }
 @keyframes blink { 0%, 92% { opacity: 1; } 93%, 96% { opacity: 0; } 97%, 100% { opacity: 1; } }
 .rec, .feed-name, .feed-stamp { position: absolute; font-family: var(--display); font-size: 20px; letter-spacing: 1px; text-shadow: 0 0 4px #000, 0 0 2px #000; }
@@ -285,7 +301,8 @@ kbd {
 
 @media (prefers-reduced-motion: reduce) {
   .noise, .figure .eye, .figure .leg, .figure .torso, .figure .head, .figure .arm, .rec i, .caret, .jump, .scare-head, .scare .eye, .scare .maw, .ai-eye, .dots::after { animation: none; }
-  .shutter, .figure { transition: none; }
+  .shutter, .figure, .figure .lean { transition: none; }
+  .figure, .hud-clock.rushing { animation: none; }
 }
 
 /* The room's mirror: shown only after a run */

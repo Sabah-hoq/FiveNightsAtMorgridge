@@ -1,5 +1,5 @@
 import { computeMirror } from '../core/metrics';
-import { makeRunConfig, newRunId, parseLiePattern } from '../core/seed';
+import { makeRunConfig, newRunId, parseLiePattern, parseRushTasks } from '../core/seed';
 import type { CohortRun, GameEvent, MirrorMetrics, Mode, RunConfig, RunRow, TaskKind } from '../core/types';
 import { fillLine, OFFER_LINES } from '../data/fallbackLines';
 import { seedCohort } from '../data/seedCohort';
@@ -54,13 +54,15 @@ export async function startRun(mode: Mode, alias: string | null): Promise<RunSta
   if (API) {
     try {
       // The backend asks Databricks where earlier players stopped looking and puts tonight's lies there.
-      const r = await post<{ lie_pattern?: string; learned_from?: number }>(
+      const r = await post<{ lie_pattern?: string; learned_from?: number; rush_tasks?: number[] }>(
         '/api/run/start', { run_id: cfg.runId, task_count: TASKS.length }, 3000);
       const learned = parseLiePattern(r.lie_pattern, TASKS.length);
       if (learned && typeof r.learned_from === 'number') {
         cfg.liePattern = learned;
         cfg.learnedFrom = r.learned_from;
       }
+      // It also asks where earlier players took longest to decide. The clock runs faster on those tasks.
+      cfg.rushTasks = parseRushTasks(r.rush_tasks, TASKS.length);
       source = 'backend';
     } catch {
       /* backend slow or down: keep the seeded pattern */
