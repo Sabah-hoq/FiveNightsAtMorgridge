@@ -54,6 +54,7 @@ The memory is cached on the server and refreshed after every finished night.
   White unit joins on floor 2 and tries a door near 2:00 AM with no offer from C.A.I.-0.
 - An open camera feed drains a little power (`CAM_DRAIN` in `src/core/gameState.ts`, about 12% if left open all of night 1). The map is free. Power out also cuts the feeds.
 - Units move inside a camera view (`unitMotion` in core, routes in `src/ui/CameraGrid.tsx`): they pace a hall and drift closer, then walk up to a door and run for the last 40% of the wait.
+- The units are drawn in `src/ui/CameraGrid.tsx`: a thin hunched figure with slit eyes on the feeds (`Figure`) and a full-screen face for the "IT GOT IN" screen (`ScareFace`). The robot photos in `src/assets/sentinel*.jpg` are no longer used.
 - Night 1 power is generous; `powerScale(night)` in `src/core/gameState.ts` makes later nights drain faster. Power out = caught.
 - The choice buttons are styled identically. The room's mirror is shown only after a run.
 - Shift lengths: short 3 min, full 5 min. Keys: `1-4` cameras, `M` map, `A`/`D` doors, `Enter` accept, `Space` do it myself, `C` check.
