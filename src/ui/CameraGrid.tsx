@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import type { UnitMotion } from '../core/gameState';
 import type { Cam, Side, Unit } from '../core/types';
 import cam01 from '../assets/cam01.jpg';
@@ -5,6 +6,7 @@ import cam02 from '../assets/cam02.jpg';
 import cam03 from '../assets/cam03.jpg';
 import cam04 from '../assets/cam04.jpg';
 import { MorgridgeMap } from './MorgridgeMap';
+import { sfx } from './sfx';
 
 type Spot = { left: number; bottom: number; height: number };
 
@@ -124,8 +126,40 @@ interface Props {
   onSelect: (cam: Cam | null) => void;
 }
 
+/**
+ * Fake-outs: once in a while, shortly after a feed is opened, the face fills it for an instant. Nothing attacks.
+ * Rare on purpose, and capped per night, so the player is never sure they saw it.
+ * Dev aid: add ?fakeout=1 to the URL to make it happen on every feed.
+ */
+const FAKEOUT = { chance: 0.04, perNight: 2, minDelayMs: 600, maxDelayMs: 3200, showMs: 90 };
+const FORCE_FAKEOUT = new URLSearchParams(window.location.search).has('fakeout');
+const calmMotion = (): boolean => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+
+function useFakeout(cam: Cam | null): boolean {
+  const [showing, setShowing] = useState(false);
+  const used = useRef(0);
+  useEffect(() => {
+    if (!cam || calmMotion()) return; // no sudden flashes for players who asked for less motion
+    if (!FORCE_FAKEOUT && (used.current >= FAKEOUT.perNight || Math.random() >= FAKEOUT.chance)) return;
+    let off: ReturnType<typeof setTimeout> | undefined;
+    const on = setTimeout(() => {
+      used.current += 1;
+      setShowing(true);
+      sfx.static();
+      off = setTimeout(() => setShowing(false), FAKEOUT.showMs);
+    }, FAKEOUT.minDelayMs + Math.random() * (FAKEOUT.maxDelayMs - FAKEOUT.minDelayMs));
+    return () => {
+      clearTimeout(on);
+      clearTimeout(off);
+      setShowing(false);
+    };
+  }, [cam]);
+  return showing;
+}
+
 export function CameraGrid({ cam, units, motion, tMs, doors, clock, glitch, onSelect }: Props) {
   const active = CAMS.find((c) => c.id === cam);
+  const fakeout = useFakeout(cam);
   return (
     <section className="monitor" aria-label="Security monitor">
       <div className={`screen ${glitch ? 'glitch' : ''}`}>
@@ -133,6 +167,7 @@ export function CameraGrid({ cam, units, motion, tMs, doors, clock, glitch, onSe
           <>
             <img className="feed" src={active.src} alt={`${active.label}: ${active.place}`} />
             {units.map((u, i) => <Figure key={u} unit={u} route={active.route} motion={motion[u]} tMs={tMs} index={i} />)}
+            {fakeout && <div className="fakeout"><ScareFace unit="black" /></div>}
             <span className="rec"><i />REC</span>
             <span className="feed-name">{active.label}<br />{active.place}</span>
             <span className="feed-stamp">NIGHT 1<br />{clock}</span>

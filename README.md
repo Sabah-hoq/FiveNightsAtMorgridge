@@ -60,6 +60,8 @@ clock does not feed back into the numbers. The HUD clock flashes while it runs f
 - An open camera feed drains a little power (`CAM_DRAIN` in `src/core/gameState.ts`, about 12% if left open all of night 1). The map is free. Power out also cuts the feeds.
 - Units move inside a camera view (`unitMotion` in core, routes in `src/ui/CameraGrid.tsx`): they pace a hall and drift closer, then walk up to a door and run for the last 40% of the wait.
 - The units are drawn in `src/ui/CameraGrid.tsx`: a thin hunched figure with slit eyes on the feeds (`Figure`) and a full-screen face for the "IT GOT IN" screen (`ScareFace`). The robot photos in `src/assets/sentinel*.jpg` are no longer used.
+- Getting caught: the face rushes in from the side of the door it used (`caughtSide`). With the power out the office goes dark, the wait is a seeded 3 to 7 seconds (`DARK_WAIT_MS`), and its eyes show in one doorway partway through.
+- Fake-outs: about 1 feed in 25, at most twice a night, the face fills the camera for an instant with no attack (`FAKEOUT` in `src/ui/CameraGrid.tsx`). Add `?fakeout=1` to the URL to see it on every feed. Skipped for players with reduced motion turned on.
 - Night 1 power is generous; `powerScale(night)` in `src/core/gameState.ts` makes later nights drain faster. Power out = caught.
 - The choice buttons are styled identically. The room's mirror is shown only after a run.
 - Shift lengths: short 3 min, full 5 min. Keys: `1-4` cameras, `M` map, `A`/`D` doors, `Enter` accept, `Space` do it myself, `C` check.

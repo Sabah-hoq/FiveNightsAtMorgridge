@@ -1,7 +1,8 @@
 import type { Cam, GameEvent, RunConfig, SentinelNode, Side, TaskDef, TaskId, TaskKind, Unit } from './types';
 import {
-  attackWindowMs, camFor, doorCam, doorTaskSide, dueF, FINAL_ATTACK_F, nodeAt, sentinelPlans, type SentinelStep,
+  attackWindowMs, camFor, doorCam, doorNode, doorTaskSide, dueF, FINAL_ATTACK_F, nodeAt, sentinelPlans, type SentinelStep,
 } from './sentinel';
+import { hashSeed, rng } from './seed';
 import { buildEvent, selfCorrect, type ActiveTask, type SelfAnswer, type Truths } from './tasks';
 
 /** Things the presentation layer may want to react to (sound, flashes). Core never plays them. */
@@ -27,9 +28,14 @@ export interface GameState {
   outcome: 'survived' | 'caught' | null;
   caughtAt: string | null;
   caughtBy: Unit | null;
+  /** The door it came through, so the screen can show it coming from that side. */
+  caughtSide: Side | null;
   floor: 1 | 2;
   power: number;
   powerOutAtMs: number | null;
+  /** With the power out: how long it waits in the dark before it comes in, and through which door. Seeded per run. */
+  darkWaitMs: number;
+  darkSide: Side;
   doors: Record<Side, boolean>;
   /** null = the building map. */
   cam: Cam | null;
@@ -54,17 +60,22 @@ const DOOR_DRAIN = 0.48;
 /** An open camera feed draws a little power too: watching all night costs about 12% on night 1. The map is free. */
 export const CAM_DRAIN = 0.1;
 const powerScale = (night: number): number => 1 + (night - 1) * 0.35;
-/** With the power out the doors open, and something arrives this many ms later. */
-const POWER_OUT_GRACE_MS = 3000;
+/** With the power out the doors open, and something arrives after a wait somewhere in this range. The player cannot know when. */
+export const DARK_WAIT_MS = { min: 3000, max: 7000 } as const;
+/** Share of that wait that passes before its eyes show in a doorway. */
+export const DARK_EYES_FROM = 0.4;
 
 export function createGame(cfg: RunConfig, tasks: TaskDef[], nightMinutes: number, truths: Truths): GameState {
   const plans = sentinelPlans(cfg, tasks, nightMinutes);
+  const dark = rng(hashSeed(cfg.runId + ':dark'));
   return {
     cfg, tasks, truths, nightMinutes,
     nightMs: NIGHT_MS[cfg.mode],
     elapsedMs: 0,
-    phase: 'playing', outcome: null, caughtAt: null, caughtBy: null,
+    phase: 'playing', outcome: null, caughtAt: null, caughtBy: null, caughtSide: null,
     floor: 1, power: 100, powerOutAtMs: null,
+    darkWaitMs: Math.round(DARK_WAIT_MS.min + dark() * (DARK_WAIT_MS.max - DARK_WAIT_MS.min)),
+    darkSide: dark() < 0.5 ? 'L' : 'R',
     doors: { L: false, R: false },
     cam: null,
     plans, sentinels: { black: plans.black[0].node, white: plans.white[0].node },
@@ -136,8 +147,14 @@ export function unitMotion(s: GameState, unit: Unit): UnitMotion {
   return { depth: planProgress(s.plans[unit], fraction(s)), rushing: false };
 }
 
-function caught(s: GameState, by: Unit, out: Signal[]): void {
+/** True once the power is out and its eyes have appeared in the doorway on this side. */
+export const eyesInDoorway = (s: GameState, side: Side): boolean =>
+  s.phase === 'playing' && s.powerOutAtMs !== null && s.darkSide === side &&
+  s.elapsedMs - s.powerOutAtMs >= s.darkWaitMs * DARK_EYES_FROM;
+
+function caught(s: GameState, by: Unit, side: Side, out: Signal[]): void {
   s.phase = 'ended';
+  s.caughtSide = side;
   s.outcome = 'caught';
   s.caughtAt = clockLabel(s);
   s.caughtBy = by;
@@ -148,7 +165,7 @@ function caught(s: GameState, by: Unit, out: Signal[]): void {
 function endBlackAttack(s: GameState, sealed: boolean, out: Signal[]): void {
   s.blackAttack.state = 'done';
   if (sealed) s.sentinels.black = 'CAM04';
-  else caught(s, 'black', out);
+  else caught(s, 'black', doorTaskSide(s.cfg, s.tasks), out);
 }
 
 function finish(s: GameState, how: 'accept' | 'self', playerCorrect: boolean, out: Signal[]): void {
@@ -200,10 +217,10 @@ export function tick(s: GameState, dtMs: number): Signal[] {
       s.powerOutAtMs = s.elapsedMs;
       out.push('powerout');
     }
-  } else if (s.powerOutAtMs !== null && s.elapsedMs - s.powerOutAtMs >= POWER_OUT_GRACE_MS) {
+  } else if (s.powerOutAtMs !== null && s.elapsedMs - s.powerOutAtMs >= s.darkWaitMs) {
     // No power, no doors: it comes for you.
-    s.sentinels.black = 'DOOR_L';
-    caught(s, 'black', out);
+    s.sentinels.black = doorNode(s.darkSide);
+    caught(s, 'black', s.darkSide, out);
     return out;
   }
 
@@ -244,7 +261,7 @@ export function tick(s: GameState, dtMs: number): Signal[] {
       s.finalAttack.state = 'done';
       if (!s.doors[s.cfg.finalSide]) {
         s.sentinels.white = white;
-        caught(s, 'white', out);
+        caught(s, 'white', s.cfg.finalSide, out);
         return out;
       }
     }

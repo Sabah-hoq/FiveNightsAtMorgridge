@@ -263,6 +263,22 @@ kbd {
 @keyframes gape { from { transform: scaleY(.15); } to { transform: scaleY(1); } }
 .jump p { position: absolute; left: 0; right: 0; bottom: 3%; font-size: clamp(36px, 7vw, 76px); letter-spacing: 4px; color: #fff; text-shadow: 0 0 12px #000, 3px 0 var(--rec); }
 @keyframes lunge { from { transform: scale(.2); } to { transform: scale(1.02); } }
+/* It comes from the side of the door it used: Door L is on the left of the desk, Door R on the right. */
+.jump.from-L .scare-head { animation-name: lunge-l, shudder; }
+.jump.from-R .scare-head { animation-name: lunge-r, shudder; }
+@keyframes lunge-l { from { transform: translateX(-85%) scale(.3) rotate(-14deg); } 70% { transform: translateX(6%) scale(1.08) rotate(3deg); } to { transform: translateX(0) scale(1.02) rotate(0deg); } }
+@keyframes lunge-r { from { transform: translateX(85%) scale(.3) rotate(14deg); } 70% { transform: translateX(-6%) scale(1.08) rotate(-3deg); } to { transform: translateX(0) scale(1.02) rotate(0deg); } }
+/* Fake-out: the face fills a feed for an instant. */
+.fakeout { position: absolute; inset: 0; background: #000; }
+.fakeout .scare-head, .fakeout .maw { animation: none; }
+/* Power out: the office goes dark, and after a while its eyes show in one doorway. */
+.desk.is-dark .monitor, .desk.is-dark .panel, .desk.is-dark .door-note, .desk.is-dark .door .key,
+.desk.is-dark .door-tag, .desk.is-dark .door-state { filter: brightness(.22) saturate(.4); transition: filter .8s ease-out; }
+.desk.is-dark .doorway { background: #000; }
+.door-eyes { position: absolute; left: 50%; top: 34%; width: 46%; transform: translateX(-50%); animation: eyes-in 1.2s ease-in both; }
+.door-eyes path { fill: #fff; filter: drop-shadow(0 0 2px var(--ai)) drop-shadow(0 0 8px var(--ai)); }
+.door-eyes .dying { animation: dying 2.3s steps(1) infinite; }
+@keyframes eyes-in { from { opacity: 0; } to { opacity: 1; } }
 .dawn p { font-size: clamp(64px, 14vw, 150px); line-height: .9; letter-spacing: 6px; }
 .dawn small { font-size: 24px; letter-spacing: 4px; color: var(--dim); }
 
@@ -302,7 +318,8 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   .noise, .figure .eye, .figure .leg, .figure .torso, .figure .head, .figure .arm, .rec i, .caret, .jump, .scare-head, .scare .eye, .scare .maw, .ai-eye, .dots::after { animation: none; }
   .shutter, .figure, .figure .lean { transition: none; }
-  .figure, .hud-clock.rushing { animation: none; }
+  .figure, .hud-clock.rushing, .door-eyes, .door-eyes .dying { animation: none; }
+  .jump.from-L .scare-head, .jump.from-R .scare-head { animation: none; }
 }
 
 /* The room's mirror: shown only after a run */
