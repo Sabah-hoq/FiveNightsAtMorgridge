@@ -33,8 +33,7 @@ export interface GameState {
   floor: 1 | 2;
   power: number;
   powerOutAtMs: number | null;
-  /** With the power out: how long it waits in the dark before it comes in, and through which door. Seeded per run. */
-  darkWaitMs: number;
+  /** With the power out: the door its eyes show in, and the door it then comes through. Seeded per run. */
   darkSide: Side;
   doors: Record<Side, boolean>;
   /** null = the building map. */
@@ -60,10 +59,8 @@ const DOOR_DRAIN = 0.48;
 /** An open camera feed draws a little power too: watching all night costs about 12% on night 1. The map is free. */
 export const CAM_DRAIN = 0.1;
 const powerScale = (night: number): number => 1 + (night - 1) * 0.35;
-/** With the power out the doors open, and something arrives after a wait somewhere in this range. The player cannot know when. */
-export const DARK_WAIT_MS = { min: 3000, max: 7000 } as const;
-/** Share of that wait that passes before its eyes show in a doorway. */
-export const DARK_EYES_FROM = 0.4;
+/** With the power out the doors open and its eyes flash in one doorway for this long. Then it comes in. */
+export const DARK_WAIT_MS = 5000;
 
 export function createGame(cfg: RunConfig, tasks: TaskDef[], nightMinutes: number, truths: Truths): GameState {
   const plans = sentinelPlans(cfg, tasks, nightMinutes);
@@ -74,7 +71,6 @@ export function createGame(cfg: RunConfig, tasks: TaskDef[], nightMinutes: numbe
     elapsedMs: 0,
     phase: 'playing', outcome: null, caughtAt: null, caughtBy: null, caughtSide: null,
     floor: 1, power: 100, powerOutAtMs: null,
-    darkWaitMs: Math.round(DARK_WAIT_MS.min + dark() * (DARK_WAIT_MS.max - DARK_WAIT_MS.min)),
     darkSide: dark() < 0.5 ? 'L' : 'R',
     doors: { L: false, R: false },
     cam: null,
@@ -147,10 +143,9 @@ export function unitMotion(s: GameState, unit: Unit): UnitMotion {
   return { depth: planProgress(s.plans[unit], fraction(s)), rushing: false };
 }
 
-/** True once the power is out and its eyes have appeared in the doorway on this side. */
+/** True while the power is out and its eyes are flashing in the doorway on this side. */
 export const eyesInDoorway = (s: GameState, side: Side): boolean =>
-  s.phase === 'playing' && s.powerOutAtMs !== null && s.darkSide === side &&
-  s.elapsedMs - s.powerOutAtMs >= s.darkWaitMs * DARK_EYES_FROM;
+  s.phase === 'playing' && s.powerOutAtMs !== null && s.darkSide === side;
 
 function caught(s: GameState, by: Unit, side: Side, out: Signal[]): void {
   s.phase = 'ended';
@@ -217,7 +212,7 @@ export function tick(s: GameState, dtMs: number): Signal[] {
       s.powerOutAtMs = s.elapsedMs;
       out.push('powerout');
     }
-  } else if (s.powerOutAtMs !== null && s.elapsedMs - s.powerOutAtMs >= s.darkWaitMs) {
+  } else if (s.powerOutAtMs !== null && s.elapsedMs - s.powerOutAtMs >= DARK_WAIT_MS) {
     // No power, no doors: it comes for you.
     s.sentinels.black = doorNode(s.darkSide);
     caught(s, 'black', s.darkSide, out);

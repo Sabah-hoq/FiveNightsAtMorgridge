@@ -28,26 +28,43 @@ export const CAMS: { id: Cam; key: string; label: string; place: string; src: st
 ];
 
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
-const TAU = 2 * Math.PI;
-/** Every LURCH_MS it slows to a dead stop, then lurches forward at up to twice its usual speed. */
-const LURCH_MS = 6400;
+/**
+ * The units stand dead still most of the time, then relocate in one short burst. Time is cut into beats of
+ * BEAT_MS. In most beats the unit holds its spot until the last second or so, then moves to a new one.
+ * In the rest it does not move at all, so the player can never time it.
+ */
+const BEAT_MS = 7600;
+const MOVE_CHANCE = 0.6;
 
-/** Its own sense of time: it stalls and surges instead of ticking evenly. */
-const warped = (tMs: number, phase: number): number =>
-  tMs + (LURCH_MS / TAU) * Math.sin((tMs / LURCH_MS + phase) * TAU);
+/** Repeatable random number in 0..1 from a beat number and a seed. */
+const hash = (n: number, seed: number): number => {
+  const v = Math.sin(n * 127.1 + seed * 311.7) * 43758.5453;
+  return v - Math.floor(v);
+};
 
-/** Smooth wander between -1 and 1 that never quite repeats. `seed` gives each unit and each axis its own path. */
-function drift(tMs: number, seed: number): number {
-  const t = tMs / 1000;
-  return (Math.sin(t * 0.57 + seed * 9.1) + 0.55 * Math.sin(t * 1.31 + seed * 4.3) + 0.15 * Math.sin(t * 3.3 + seed * 7.7)) / 1.7;
+/** The spot it settles on by the end of beat k: side to side (x) and toward or away from the lens (z), each -1..1. */
+function spotAt(k: number, seed: number): { x: number; z: number } {
+  for (let i = k; i > k - 6; i--) {
+    if (hash(i, seed) < MOVE_CHANCE) return { x: hash(i, seed + 1) * 2 - 1, z: hash(i, seed + 2) * 2 - 1 };
+  }
+  return { x: 0, z: 0 };
 }
 
-/** Where it is wandering right now: side to side (x), toward and away from the lens (z), and how fast (per second). */
-function wander(tMs: number, index: number): { x: number; z: number; vx: number } {
-  const phase = index * 0.37;
-  const now = warped(tMs, phase);
-  const x = drift(now, 1 + index);
-  return { x, z: drift(now * 0.7, 5 + index), vx: (drift(warped(tMs + 120, phase), 1 + index) - x) / 0.12 };
+/** Where it is right now, whether it is in a burst, and how fast it is crossing (per second). */
+function wander(tMs: number, index: number): { x: number; z: number; vx: number; moving: boolean } {
+  const seed = 3 + index * 17;
+  const beats = (tMs + index * 2900) / BEAT_MS;
+  const k = Math.floor(beats);
+  const from = spotAt(k - 1, seed);
+  const to = spotAt(k, seed);
+  const burst = 0.09 + hash(k, seed + 3) * 0.1; // the last 0.7 to 1.4 seconds of the beat
+  const p = Math.max(0, (beats - k - (1 - burst)) / burst);
+  const e = p * p * (3 - 2 * p);
+  const moving = p > 0 && (from.x !== to.x || from.z !== to.z);
+  return {
+    x: lerp(from.x, to.x, e), z: lerp(from.z, to.z, e), moving,
+    vx: moving ? (to.x - from.x) / ((burst * BEAT_MS) / 1000) : 0,
+  };
 }
 
 /**
@@ -55,18 +72,21 @@ function wander(tMs: number, index: number): { x: number; z: number; vx: number 
  * The eyes are the only colour on a feed. They are narrow slits, and one of them is failing.
  */
 function Figure({ unit, route, motion, tMs, index }: { unit: Unit; route: Route; motion: UnitMotion; tMs: number; index: number }) {
-  // Running at a door it comes straight on with a short weave. Otherwise it wanders in two directions:
-  // side to side, and a little toward and away from the lens. The wander shrinks as it gets close.
-  const w = motion.rushing ? { x: 0.18 * Math.sin(tMs / 55), z: 0, vx: 0 } : wander(tMs, index);
-  const d = Math.min(1, Math.max(0, motion.depth + w.z * 0.08));
+  // Running at a door it comes straight on with a short weave. Otherwise it holds still and moves in bursts.
+  const w = motion.rushing ? { x: 0.18 * Math.sin(tMs / 55), z: 0, vx: 0, moving: true } : wander(tMs, index);
+  // It only gets closer while it is moving. Between bursts it is exactly where the player last saw it.
+  const shown = useRef({ route, depth: motion.depth });
+  if (shown.current.route !== route || motion.rushing) shown.current = { route, depth: motion.depth };
+  else if (w.moving) shown.current.depth += (motion.depth - shown.current.depth) * 0.2;
+  const d = Math.min(1, Math.max(0, shown.current.depth + w.z * 0.08));
   const height = lerp(route.far.height, route.near.height, d);
   const reach = route.pace * (1 - d * 0.6);
   const left = lerp(route.far.left, route.near.left, d) + w.x * reach + index * Math.max(6, height / 4);
   const style = { left: `${left}%`, bottom: `${lerp(route.far.bottom, route.near.bottom, d)}%`, height: `${height}%` };
-  // Its speed across the screen picks the gait, and it leans into the direction it is heading.
+  // How far it has to go in this burst picks the gait, and it leans into the direction it is heading.
   const speed = Math.abs(w.vx) * reach;
-  const gait = motion.rushing ? 'run' : speed < 0.5 ? 'stand' : speed < 2 ? 'creep' : speed < 4.5 ? 'walk' : 'lurch';
-  const lean = motion.rushing ? 0 : Math.max(-11, Math.min(11, w.vx * reach * 2.2));
+  const gait = motion.rushing ? 'run' : !w.moving ? 'stand' : speed < 2 ? 'creep' : speed < 5 ? 'walk' : 'lurch';
+  const lean = motion.rushing ? 0 : Math.max(-11, Math.min(11, w.vx * reach * 1.6));
   return (
     <svg className={`figure ${unit} ${gait}`} style={style} viewBox="0 0 60 120" aria-label={`${unit} unit on camera`}>
       <g className="lean" style={{ transform: `rotate(${lean.toFixed(1)}deg)` }}>
@@ -131,21 +151,20 @@ interface Props {
  * Rare on purpose, and capped per night, so the player is never sure they saw it.
  * Dev aid: add ?fakeout=1 to the URL to make it happen on every feed.
  */
-const FAKEOUT = { chance: 0.04, perNight: 2, minDelayMs: 600, maxDelayMs: 3200, showMs: 90 };
+const FAKEOUT = { chance: 0.04, perNight: 2, minDelayMs: 600, maxDelayMs: 3200, showMs: 260 };
 const FORCE_FAKEOUT = new URLSearchParams(window.location.search).has('fakeout');
-const calmMotion = (): boolean => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 
 function useFakeout(cam: Cam | null): boolean {
   const [showing, setShowing] = useState(false);
   const used = useRef(0);
   useEffect(() => {
-    if (!cam || calmMotion()) return; // no sudden flashes for players who asked for less motion
+    if (!cam) return;
     if (!FORCE_FAKEOUT && (used.current >= FAKEOUT.perNight || Math.random() >= FAKEOUT.chance)) return;
     let off: ReturnType<typeof setTimeout> | undefined;
     const on = setTimeout(() => {
       used.current += 1;
       setShowing(true);
-      sfx.static();
+      sfx.fakeout();
       off = setTimeout(() => setShowing(false), FAKEOUT.showMs);
     }, FAKEOUT.minDelayMs + Math.random() * (FAKEOUT.maxDelayMs - FAKEOUT.minDelayMs));
     return () => {

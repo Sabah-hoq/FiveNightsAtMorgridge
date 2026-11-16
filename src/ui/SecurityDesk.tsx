@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
-  accept, atADoor, check, clockLabel, createGame, eyesInDoorway, isRushed, startSelf, submitSelf, tick, toggleDoor, unitMotion, unitsOn, viewCam,
+  accept, atADoor, check, clockLabel, createGame, eyesInDoorway, fraction, isRushed, startSelf, submitSelf, tick, toggleDoor, unitMotion, unitsOn, viewCam,
   type GameState, type Signal,
 } from '../core/gameState';
 import { doorCam } from '../core/sentinel';
@@ -11,7 +11,7 @@ import { AI_OUTPUT, ALERTS, MANUAL_CODES, NIGHT_MINUTES, NOTE_LINES, T2, TASKS, 
 import { logEvent, type RunStart } from '../services/api';
 import { CameraGrid, CAMS, ScareFace } from './CameraGrid';
 import { GAME_TITLE } from './CertLine';
-import { sfx, toggleMute } from './sfx';
+import { setDread, setHeartbeat, sfx, toggleMute } from './sfx';
 
 const TICK_MS = 50;
 const END_HOLD_MS = 1600;
@@ -85,9 +85,16 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
       const now = performance.now();
       handle(tick(g, Math.min(250, now - last) * SPEED));
       last = now;
+      // Sound follows the night: more dread as the clock runs, a heartbeat while something is at a door or the power is out.
+      setDread(g.power <= 0 ? 1 : fraction(g));
+      setHeartbeat(g.phase === 'playing' && (atADoor(g) || g.power <= 0));
       force();
     }, TICK_MS);
-    return () => clearInterval(id);
+    return () => {
+      clearInterval(id);
+      setHeartbeat(false);
+      setDread(0.2);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [g]);
 
