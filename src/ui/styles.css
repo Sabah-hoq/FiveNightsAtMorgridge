@@ -163,8 +163,6 @@ kbd {
 .figure.lurch .torso { animation: bob-run .18s ease-in-out infinite; }
 .figure.lurch .arm { animation: swing .72s ease-in-out infinite; }
 .figure.lurch .arm.b { animation-delay: -.36s; }
-.figure.stand .torso { animation: sway 3.6s ease-in-out infinite; }
-@keyframes sway { 0%, 100% { transform: rotate(-1.6deg); } 50% { transform: rotate(1.8deg) translateY(1px); } }
 /* The feed drops a frame now and then: it is gone for an instant. */
 .figure { animation: dropframe 7.9s steps(1) infinite; }
 @keyframes dropframe { 0%, 100% { opacity: 1; } 37% { opacity: 0; } 37.9% { opacity: 1; } 81% { opacity: .35; } 81.6% { opacity: 1; } }
@@ -247,6 +245,7 @@ kbd {
 .jump { animation: jolt .45s steps(2) 2; }
 .scare { position: absolute; inset: 0; width: 100%; height: 100%; }
 .scare-head { transform-box: fill-box; transform-origin: 50% 45%; animation: lunge .32s cubic-bezier(.2, .9, .3, 1) both, shudder .09s steps(2) .32s infinite; }
+.jump .scare-head { animation-duration: .6s, .09s; animation-delay: 0s, .6s; animation-timing-function: cubic-bezier(.55, 0, .9, .4), steps(2); }
 .scare .shell { fill: #0b0c0f; stroke: #2c3036; stroke-width: 1.5; }
 .scare.white .shell { fill: #aeb5ba; stroke: #e6eaed; }
 .scare .plate { fill: #000; }
@@ -266,19 +265,20 @@ kbd {
 /* It comes from the side of the door it used: Door L is on the left of the desk, Door R on the right. */
 .jump.from-L .scare-head { animation-name: lunge-l, shudder; }
 .jump.from-R .scare-head { animation-name: lunge-r, shudder; }
-@keyframes lunge-l { from { transform: translateX(-85%) scale(.3) rotate(-14deg); } 70% { transform: translateX(6%) scale(1.08) rotate(3deg); } to { transform: translateX(0) scale(1.02) rotate(0deg); } }
-@keyframes lunge-r { from { transform: translateX(85%) scale(.3) rotate(14deg); } 70% { transform: translateX(-6%) scale(1.08) rotate(-3deg); } to { transform: translateX(0) scale(1.02) rotate(0deg); } }
+@keyframes lunge-l { from { transform: translateX(-130%) scale(.35) rotate(-16deg); } 85% { transform: translateX(5%) scale(1.1) rotate(3deg); } to { transform: translateX(0) scale(1.02) rotate(0deg); } }
+@keyframes lunge-r { from { transform: translateX(130%) scale(.35) rotate(16deg); } 85% { transform: translateX(-5%) scale(1.1) rotate(-3deg); } to { transform: translateX(0) scale(1.02) rotate(0deg); } }
 /* Fake-out: the face fills a feed for an instant. */
-.fakeout { position: absolute; inset: 0; background: #000; }
+.fakeout { position: absolute; inset: 0; background: #000; z-index: 2; }
+.fakeout .shell { stroke: #6b7078; stroke-width: 2.5; }
 .fakeout .scare-head, .fakeout .maw { animation: none; }
 /* Power out: the office goes dark, and after a while its eyes show in one doorway. */
 .desk.is-dark .monitor, .desk.is-dark .panel, .desk.is-dark .door-note, .desk.is-dark .door .key,
 .desk.is-dark .door-tag, .desk.is-dark .door-state { filter: brightness(.22) saturate(.4); transition: filter .8s ease-out; }
 .desk.is-dark .doorway { background: #000; }
-.door-eyes { position: absolute; left: 50%; top: 34%; width: 46%; transform: translateX(-50%); animation: eyes-in 1.2s ease-in both; }
+.door-eyes { position: absolute; left: 50%; top: 34%; width: 46%; transform: translateX(-50%); animation: eyes-flash .5s steps(1) infinite; }
 .door-eyes path { fill: #fff; filter: drop-shadow(0 0 2px var(--ai)) drop-shadow(0 0 8px var(--ai)); }
-.door-eyes .dying { animation: dying 2.3s steps(1) infinite; }
-@keyframes eyes-in { from { opacity: 0; } to { opacity: 1; } }
+/* On for a beat, off for a beat: two flashes a second, for the five seconds before it comes in. */
+@keyframes eyes-flash { 0% { opacity: 1; } 55% { opacity: 0; } }
 .dawn p { font-size: clamp(64px, 14vw, 150px); line-height: .9; letter-spacing: 6px; }
 .dawn small { font-size: 24px; letter-spacing: 4px; color: var(--dim); }
 
@@ -316,10 +316,9 @@ kbd {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .noise, .figure .eye, .figure .leg, .figure .torso, .figure .head, .figure .arm, .rec i, .caret, .jump, .scare-head, .scare .eye, .scare .maw, .ai-eye, .dots::after { animation: none; }
+  .noise, .figure .eye, .figure .leg, .figure .torso, .figure .head, .figure .arm, .rec i, .caret, .scare .eye, .ai-eye, .dots::after { animation: none; }
   .shutter, .figure, .figure .lean { transition: none; }
-  .figure, .hud-clock.rushing, .door-eyes, .door-eyes .dying { animation: none; }
-  .jump.from-L .scare-head, .jump.from-R .scare-head { animation: none; }
+  .figure, .hud-clock.rushing { animation: none; }
 }
 
 /* The room's mirror: shown only after a run */
