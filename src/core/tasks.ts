@@ -4,6 +4,8 @@ export interface ActiveTask {
   def: TaskDef;
   aiCorrect: boolean;
   openedAtMs: number;
+  /** Real time the task has been open. The night clock can run fast on a task, this never does. */
+  realMs: number;
   /** Player looked at the source before deciding (camera, panel, draft). */
   checked: boolean;
   /** 'offer' = choices on the table. 'self' = player is doing it. */
@@ -63,7 +65,7 @@ export function buildEvent(cfg: RunConfig, task: ActiveTask, how: 'accept' | 'se
     tactic: cfg.tactic,
     choice: choiceFor(how, task.checked),
     checked: task.checked,
-    decision_ms: Math.round(nowMs - task.openedAtMs),
+    decision_ms: Math.round(task.realMs),
     pressure_s: task.def.pressureS,
     player_correct: playerCorrect,
     ts: new Date(cfg.startedAt + nowMs).toISOString(),

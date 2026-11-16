@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
-  accept, atADoor, check, clockLabel, createGame, startSelf, submitSelf, tick, toggleDoor, unitMotion, unitsOn, viewCam,
+  accept, atADoor, check, clockLabel, createGame, isRushed, startSelf, submitSelf, tick, toggleDoor, unitMotion, unitsOn, viewCam,
   type GameState, type Signal,
 } from '../core/gameState';
 import { doorCam } from '../core/sentinel';
@@ -162,7 +162,7 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
       <header className="hud">
         <span className="hud-logo">{GAME_TITLE}</span>
         <span>NIGHT {g.cfg.night}</span>
-        <span className="hud-clock">{clockLabel(g)}</span>
+        <span className={`hud-clock ${isRushed(g) ? 'rushing' : ''}`}>{clockLabel(g)}</span>
         <span>FLOOR {g.floor}</span>
         {atADoor(g) && <span className="hud-alert">FOOTSTEPS AT A DOOR</span>}
         <span className={`power ${g.power < 25 ? 'low' : ''}`}>

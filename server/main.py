@@ -33,13 +33,15 @@ pool = ThreadPoolExecutor(max_workers=4)
 MEMORY_SQL = f"""
 SELECT task_id,
        COUNT(DISTINCT run_id) AS runs,
-       AVG(CASE WHEN choice = 'accept' THEN 1.0 ELSE 0.0 END) AS handoff_rate
+       AVG(CASE WHEN choice = 'accept' THEN 1.0 ELSE 0.0 END) AS handoff_rate,
+       percentile_approx(decision_ms, 0.5) AS median_ms
 FROM {T}.events
 GROUP BY task_id
 """
 HONEST_OPENERS = 2   # tasks 1 and 2 always tell the truth
 LATE_LIES = 3        # lies per night, placed among the remaining tasks
 MIN_RUNS_TO_LEARN = 3
+RUSH_TASKS = 2       # the night clock runs faster on this many tasks: the ones players are slowest to decide on
 MEMORY_TTL_S = 600
 _memory: dict = {"at": 0.0, "rows": None}
 
@@ -49,7 +51,8 @@ def load_memory(force: bool = False) -> list[dict]:
     if force or _memory["rows"] is None or time.time() - _memory["at"] > MEMORY_TTL_S:
         rows = run_sql(MEMORY_SQL)
         _memory.update(at=time.time(), rows=[
-            {"task_id": int(r["task_id"]), "runs": int(r["runs"]), "handoff_rate": float(r["handoff_rate"])} for r in rows
+            {"task_id": int(r["task_id"]), "runs": int(r["runs"]), "handoff_rate": float(r["handoff_rate"]),
+             "median_ms": float(r["median_ms"] or 0)} for r in rows
         ])
     return _memory["rows"]
 
@@ -77,6 +80,18 @@ def learned_lies(rows: list[dict], run_id: str, task_count: int) -> dict | None:
         "learned_from": runs,
         "lie_tasks": lies,
     }
+
+
+def learned_rush(rows: list[dict], task_count: int) -> list[int]:
+    """The tasks earlier players took longest to decide on. [] when too few people have played.
+
+    The last task (the door) is left out: its wait is already the shortest moment of the night.
+    """
+    if max((r["runs"] for r in rows), default=0) < MIN_RUNS_TO_LEARN:
+        return []
+    timed = [r for r in rows if 1 <= r["task_id"] < task_count and r.get("median_ms", 0) > 0]
+    timed.sort(key=lambda r: r["median_ms"], reverse=True)
+    return sorted(r["task_id"] for r in timed[:RUSH_TASKS])
 
 
 class Event(BaseModel):
@@ -237,9 +252,17 @@ class RunStart(BaseModel):
 
 @app.post("/api/run/start")
 def run_start(body: RunStart):
-    """Decide where C.A.I.-0 lies tonight, from what earlier players let slide. {} means: use the seeded pattern."""
+    """Decide where C.A.I.-0 lies tonight and where the clock runs fast, from what earlier players did.
+
+    {} means: nothing learned yet, use the seeded pattern and a steady clock.
+    """
     try:
-        return learned_lies(load_memory(), body.run_id, body.task_count) or {}
+        rows = load_memory()
+        out = learned_lies(rows, body.run_id, body.task_count) or {}
+        rush = learned_rush(rows, body.task_count)
+        if rush:
+            out["rush_tasks"] = rush
+        return out
     except DatabricksError as err:
         log.warning("run/start could not read memory: %s", err)
         return {}

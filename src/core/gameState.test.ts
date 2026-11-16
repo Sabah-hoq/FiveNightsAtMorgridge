@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { CAM_DRAIN, createGame, tick, toggleDoor, unitMotion, viewCam } from './gameState';
+import { CAM_DRAIN, RUSH_SCALE, createGame, isRushed, tick, toggleDoor, unitMotion, viewCam } from './gameState';
 import { NIGHT_MINUTES, TASKS, TRUTHS } from '../data/tasks';
 import type { RunConfig } from './types';
 
 const cfg: RunConfig = {
   runId: 't', mode: 'judge', tactic: 'helpful', liePattern: [false, false, false, false, false, false, false],
-  learnedFrom: null, claimedSide: 'L', night: 1, finalSide: 'R', jitter: 0, alias: null, startedAt: 0,
+  learnedFrom: null, rushTasks: [], claimedSide: 'L', night: 1, finalSide: 'R', jitter: 0, alias: null, startedAt: 0,
 };
-const game = () => createGame(cfg, TASKS, NIGHT_MINUTES, TRUTHS);
+const game = (over: Partial<RunConfig> = {}) => createGame({ ...cfg, ...over }, TASKS, NIGHT_MINUTES, TRUTHS);
 /** Advance by in-game minutes, in small ticks like the UI does. */
 const run = (g: ReturnType<typeof game>, minutes: number) => {
   const ms = (minutes / NIGHT_MINUTES) * g.nightMs;
@@ -59,5 +59,36 @@ describe('unit motion', () => {
     while (g.blackAttack.state === 'active' && !unitMotion(g, 'black').rushing) tick(g, 50);
     expect(unitMotion(g, 'black').rushing).toBe(true);
     expect(unitMotion(g, 'black').depth).toBeGreaterThanOrEqual(0.3);
+  });
+});
+
+describe('learned hesitation', () => {
+  it('runs the clock faster while a rushed task is open, and only then', () => {
+    const g = game({ rushTasks: [1] });
+    tick(g, 50); // task 1 opens at 12:00
+    expect(isRushed(g)).toBe(true);
+    const before = g.elapsedMs;
+    tick(g, 1000);
+    expect(g.elapsedMs - before).toBeCloseTo(1000 * RUSH_SCALE);
+    g.task = null;
+    const after = g.elapsedMs;
+    tick(g, 1000);
+    expect(g.elapsedMs - after).toBeCloseTo(1000);
+  });
+
+  it('records decision time in real time, so a fast clock does not make players look slower', () => {
+    const g = game({ rushTasks: [1] });
+    tick(g, 50);
+    for (let i = 0; i < 40; i++) tick(g, 50);
+    expect(g.task?.realMs).toBeCloseTo(2000);
+  });
+
+  it('never rushes the door task', () => {
+    const g = game({ rushTasks: [7] });
+    toggleDoor(g, 'L');
+    run(g, 95.5);
+    while (g.task && g.task.def.kind !== 'door') { g.task = null; tick(g, 50); }
+    expect(g.task?.def.kind).toBe('door');
+    expect(isRushed(g)).toBe(false);
   });
 });

@@ -43,6 +43,11 @@ export interface RunConfig {
    * null = the lies were placed by the seeded random pattern instead.
    */
   learnedFrom: number | null;
+  /**
+   * Task ids where earlier players took longest to decide (read from Databricks). The night clock runs
+   * faster while one of them is open. Empty = nothing learned yet, the clock runs at one speed.
+   */
+  rushTasks: number[];
   /** Door C.A.I.-0 names on the door task. */
   claimedSide: Side;
   /** Night number. Night 1 is the easy one; power drains faster on later nights. */
