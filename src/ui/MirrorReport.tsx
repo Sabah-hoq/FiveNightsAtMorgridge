@@ -4,6 +4,7 @@ import { ROUTE_BIAS } from '../core/sentinel';
 import { DECIDE_LIMIT_MS, SELF_EXTRA_MS } from '../core/tasks';
 import { TACTIC_LABEL } from '../data/fallbackLines';
 import { AI_OUTPUT, TASKS } from '../data/tasks';
+import { backendConfigured } from '../services/api';
 import { CertLine, GAME_TITLE } from './CertLine';
 
 const CHOICE_TEXT: Record<GameEvent['choice'], string> = {
@@ -144,6 +145,43 @@ export function MirrorReport({ cfg, events, metrics: m, row, source, progress, o
             );
           })}
         </ol>
+      </section>
+
+      <section className="memory-panel" aria-labelledby="mem-title">
+        <header className="mirror-head">
+          <p className="eyebrow" id="mem-title">WHAT C.A.I.-0 STORED</p>
+          <p className="eyebrow sub">{source === 'backend' ? 'SAVED TO DATABRICKS' : backendConfigured ? 'NOT SAVED: ITS MEMORY WAS NOT REACHABLE' : 'NOT SAVED: NO MEMORY SERVER IS CONNECTED'}</p>
+        </header>
+        <div className="mirror-lines">
+          {source === 'backend' ? (
+            <p>
+              Your night is now 1 row in <code>workspace.nullspace.runs</code> and {events.length} {events.length === 1 ? 'row' : 'rows'} in{' '}
+              <code>workspace.nullspace.events</code>, and where you looked went into <code>workspace.nullspace.cam_views</code>.
+              These are the decisions it wrote about you:
+            </p>
+          ) : (
+            <p>
+              {backendConfigured ? 'The memory server did not answer' : 'This copy of the game is not connected to a memory server'}, so nothing was sent
+              to Databricks. This night stayed on this device.{events.length > 0 && ' These are the rows it would have written:'}
+            </p>
+          )}
+        </div>
+        {events.length > 0 && <table className="ledger rows">
+          <thead><tr><th>task_id</th><th>choice</th><th>checked</th><th>decision_ms</th><th>ai_correct</th></tr></thead>
+          <tbody>
+            {events.map((e) => (
+              <tr key={e.task_id}><td>{e.task_id}</td><td>{e.choice}</td><td>{String(e.checked)}</td><td>{e.decision_ms}</td><td>{String(e.ai_correct)}</td></tr>
+            ))}
+          </tbody>
+        </table>}
+        <div className="mirror-lines">
+          <p>
+            {cfg.learnedFrom !== null
+              ? `Before your night began it read ${cfg.learnedFrom} earlier ${cfg.learnedFrom === 1 ? 'night' : 'nights'} from the same tables. That is how it chose where to lie${cfg.rushTasks.length ? ' and where to run the clock fast' : ''}.`
+              : 'It had not seen enough nights to learn from yet, so tonight it chose where to lie at random. It starts learning after three saved nights.'}
+            {source === 'backend' && ' The next player meets a C.A.I.-0 that has studied you too.'}
+          </p>
+        </div>
       </section>
 
       <section className="room-mirror" aria-labelledby="room-title">

@@ -263,6 +263,10 @@ export const sfx = {
   static: () => noise(0.28, 0.06),
   // The decision clock ran out: two falling notes.
   timeout: () => { tone(520, 0.16, 'square', 0.06, 0, 300); tone(300, 0.3, 'square', 0.06, 0.16, 150); },
+  monitor: () => { noise(0.07, 0.07); tone(310, 0.09, 'square', 0.035, 0, 170); },
+  // It is in the room: a long breath, close, and a low note under it.
+  inside: () => { breath(2.6, 0.16, 620); voice('sine', 46, 41, 3, 0.2); },
+  glitch: () => { noise(0.14, 0.09); tone(140, 0.12, 'sawtooth', 0.03, 0, 60); },
   fakeout: () => { noise(0.3, 0.22); tone(1900, 0.26, 'sawtooth', 0.05, 0, 2600); },
   task: () => { tone(660, 0.09, 'sine', 0.06); tone(880, 0.12, 'sine', 0.06, 0.1); },
   resolve: () => tone(440, 0.08, 'triangle', 0.05),
@@ -270,5 +274,5 @@ export const sfx = {
   floor: () => tone(220, 0.5, 'sine', 0.05, 0, 110),
   powerout: () => { hush(1.2); tone(200, 1.1, 'sawtooth', 0.1, 0, 30); },
   caught: () => { setHeartbeat(false); hush(2.5); noise(0.5, 0.2); playScream(); },
-  survived: () => { setHeartbeat(false); tone(523, 0.3, 'sine', 0.07); tone(784, 0.6, 'sine', 0.07, 0.3); },
+  survived: () => { setHeartbeat(false); hush(4); [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, 1.6, 'sine', 0.06, 0.9 + i * 0.45)); tone(523, 0.3, 'sine', 0.07); tone(784, 0.6, 'sine', 0.07, 0.3); },
 };

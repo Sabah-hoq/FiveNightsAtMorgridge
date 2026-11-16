@@ -5,6 +5,7 @@ import { clearProgress, loadProgress } from '../services/progress';
 import { CertLine, GAME_TITLE } from './CertLine';
 
 const KEYS: [string, string][] = [
+  ['S', 'RAISE / LOWER MONITOR'],
   ['1 to 7', 'OPEN A CAMERA'],
   ['M', 'BACK TO THE MAP'],
   ['A / D', 'SEAL DOOR L / R'],
@@ -14,7 +15,7 @@ const KEYS: [string, string][] = [
 ];
 
 const STEPS: [string, string][] = [
-  ['WATCH', 'Your monitor opens on a map of the building. Seven cameras are marked on it. Press 1 to 7 to look through one. What walks the halls does not take the same route twice.'],
+  ['WATCH', 'You sit in your office. Move the mouse to look left and right. Raise the monitor to see a map and seven cameras. While it is up, you cannot see your doors. What walks the halls does not take the same route twice.'],
   ['SEAL', 'Two doors lead into your office. CAM 01 watches Door L. CAM 02 watches Door R. If something is standing at a door, seal that door. Sealed doors use power. An open camera uses a little too; the map is free.'],
   ['DECIDE', "C.A.I.-0, the building's AI, will offer to handle small jobs for you. Accepting is instant. Doing a job yourself takes a few seconds longer. Wait more than 20 seconds and C.A.I.-0 decides for you."],
   ['LAST', 'Hold the office until 2:00 AM. Afterwards you get a report of the choices you made. Play data is saved without your name.'],

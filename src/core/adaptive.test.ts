@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accept, camViewRows, check, createGame, decideLeftMs, selfProgress, startSelf, submitSelf, tick, viewCam } from './gameState';
+import { accept, camViewRows, check, createGame, decideLeftMs, selfProgress, setMonitor, startSelf, submitSelf, tick, viewCam } from './gameState';
 import { camWeights, dueF, nodeAt, OUTER_CAMS, sentinelPlans, slotOf, WATCH_SLOTS, watchShares } from './sentinel';
 import { parseWatch } from './seed';
 import { DECIDE_LIMIT_MS, SELF_EXTRA_MS } from './tasks';
@@ -175,5 +175,31 @@ describe('deciding takes time', () => {
     wait(g, 500);
     expect(g.task).toBeNull();
     expect(g.events[g.events.length - 1]).toMatchObject({ task_id: 4, choice: 'check_then_self', checked: true });
+  });
+});
+
+describe('cameras and the monitor together', () => {
+  it('only time with the monitor raised counts as watching', () => {
+    const g = game();
+    tick(g, 50);
+    g.task = null;
+    viewCam(g, 'CAM05'); // raises the monitor
+    wait(g, 2000);
+    setMonitor(g, false);
+    wait(g, 5000); // monitor down: the feed is remembered but nobody is looking
+    g.task = null;
+    setMonitor(g, true); // back up on the same feed: one more look
+    wait(g, 1000);
+    g.task = null;
+    expect(camViewRows(g)).toEqual([{ run_id: 't', cam: 'CAM05', slot: 0, view_ms: 3000, opens: 2 }]);
+  });
+
+  it('a camera only draws power while the monitor is up', () => {
+    const g = game();
+    viewCam(g, 'CAM06');
+    setMonitor(g, false);
+    wait(g, 20_000);
+    g.task = null;
+    expect(g.power).toBe(100);
   });
 });

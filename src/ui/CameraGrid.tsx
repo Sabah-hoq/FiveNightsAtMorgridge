@@ -144,6 +144,10 @@ export function ScareFace({ unit }: { unit: Unit }) {
 
 interface Props {
   cam: Cam | null;
+  /** False while the monitor is lowered: nothing new happens on a screen nobody is looking at. */
+  live: boolean;
+  /** Something is in the office: every feed drops to static. */
+  lost: boolean;
   night: number;
   units: Unit[];
   /** Where each unit is inside its camera view. */
@@ -186,12 +190,12 @@ function useFakeout(cam: Cam | null): boolean {
   return showing;
 }
 
-export function CameraGrid({ cam, night, units, motion, tMs, doors, clock, glitch, onSelect }: Props) {
+export function CameraGrid({ cam, live, lost, night, units, motion, tMs, doors, clock, glitch, onSelect }: Props) {
   const active = CAMS.find((c) => c.id === cam);
-  const fakeout = useFakeout(cam);
+  const fakeout = useFakeout(live && !lost ? cam : null);
   return (
     <section className="monitor" aria-label="Security monitor">
-      <div className={`screen ${glitch ? 'glitch' : ''}`}>
+      <div className={`screen ${glitch || lost ? 'glitch' : ''} ${lost ? 'lost' : ''}`}>
         {active ? (
           <>
             <img className="feed" src={active.src} alt={`${active.label}: ${active.place}`} />
@@ -204,6 +208,7 @@ export function CameraGrid({ cam, night, units, motion, tMs, doors, clock, glitc
         ) : (
           <MorgridgeMap cam={cam} doors={doors} onSelect={onSelect} />
         )}
+        {lost && <p className="signal-lost">SIGNAL LOST</p>}
         <div className="noise" aria-hidden="true" />
       </div>
       <div className="cam-tabs">
@@ -211,7 +216,7 @@ export function CameraGrid({ cam, night, units, motion, tMs, doors, clock, glitc
           MAP <kbd>M</kbd>
         </button>
         {CAMS.map((c) => (
-          <button key={c.id} id={`cam-${c.id}`} className={`key ${cam === c.id ? 'on' : ''}`} aria-pressed={cam === c.id}
+          <button key={c.id} id={`cam-${c.id}`} className={`key ${cam === c.id ? 'on' : ''}`} aria-pressed={cam === c.id} tabIndex={live ? 0 : -1}
             onClick={() => onSelect(c.id)}>
             {c.label} <kbd>{c.key}</kbd>
           </button>
