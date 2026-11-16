@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CAM_DRAIN, DARK_WAIT_MS, RUSH_SCALE, createGame, eyesInDoorway, isRushed, tick, toggleDoor, unitMotion, viewCam } from './gameState';
+import { CAM_DRAIN, DARK_WAIT_MS, DOOR_EYES_FROM, INSIDE_MAX_MS, RUSH_SCALE, createGame, eyesInDoorway, isRushed, setMonitor, tick, toggleDoor, unitMotion, viewCam } from './gameState';
 import { NIGHT_MINUTES, TASKS, TRUTHS } from '../data/tasks';
 import type { RunConfig } from './types';
 
@@ -121,5 +121,73 @@ describe('getting caught', () => {
       expect(g.caughtSide).toBe(g.darkSide);
       expect(Math.abs(waited - DARK_WAIT_MS)).toBeLessThanOrEqual(100);
     }
+  });
+});
+
+describe('the monitor', () => {
+  /** Run an honest night up to the moment the black unit arrives at Door L, with nothing sealed. */
+  const atTheDoor = () => {
+    const g = game();
+    run(g, 95.2);
+    g.task = null;
+    while (g.blackAttack.state !== 'active') tick(g, 50);
+    g.task = null;
+    return g;
+  };
+
+  it('starts lowered, and a camera only draws power while it is raised', () => {
+    const g = game();
+    expect(g.monitorUp).toBe(false);
+    viewCam(g, 'CAM04');
+    expect(g.monitorUp).toBe(true);
+    run(g, 5);
+    const mid = g.power;
+    expect(mid).toBeLessThan(100);
+    setMonitor(g, false);
+    run(g, 5);
+    expect(g.power).toBe(mid);
+    expect(g.cam).toBe('CAM04'); // it remembers the feed for next time
+  });
+
+  it('a unit that gets in while the monitor is up waits until it is lowered', () => {
+    const g = atTheDoor();
+    viewCam(g, 'CAM04');
+    while (!g.inside && g.phase === 'playing') tick(g, 50);
+    expect(g.phase).toBe('playing');
+    expect(g.inside).toMatchObject({ unit: 'black', side: 'L' });
+    expect(g.sentinels.black).toBe('GONE'); // it is on no camera now
+    const signals = setMonitor(g, false);
+    expect(signals).toContain('caught');
+    expect(g.outcome).toBe('caught');
+    expect(g.caughtSide).toBe('L');
+  });
+
+  it('it does not wait forever', () => {
+    const g = atTheDoor();
+    viewCam(g, 'CAM04');
+    while (!g.inside && g.phase === 'playing') tick(g, 50);
+    let waited = 0;
+    while (g.phase === 'playing') { tick(g, 50); waited += 50; g.task = null; }
+    expect(g.outcome).toBe('caught');
+    expect(Math.abs(waited - INSIDE_MAX_MS)).toBeLessThanOrEqual(100);
+  });
+
+  it('with the monitor down it takes the player at once', () => {
+    const g = atTheDoor();
+    while (g.phase === 'playing') tick(g, 50);
+    expect(g.inside).toBeNull();
+    expect(g.outcome).toBe('caught');
+  });
+
+  it('eyes show in an open doorway only for the last part of the wait, and never behind a sealed door', () => {
+    const g = atTheDoor();
+    expect(eyesInDoorway(g, 'L')).toBe(false);
+    const windowMs = g.blackAttack.endsAtMs - g.elapsedMs;
+    for (let t = 0; t < windowMs * DOOR_EYES_FROM + 150; t += 50) tick(g, 50);
+    expect(g.phase).toBe('playing');
+    expect(eyesInDoorway(g, 'L')).toBe(true);
+    expect(eyesInDoorway(g, 'R')).toBe(false);
+    toggleDoor(g, 'L');
+    expect(eyesInDoorway(g, 'L')).toBe(false);
   });
 });

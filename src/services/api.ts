@@ -11,6 +11,8 @@ import { AI_OUTPUT, TASKS } from '../data/tasks';
  * local lines + local metrics so the game runs fully offline.
  */
 const API: string = import.meta.env.VITE_API_URL ?? '';
+/** True when a memory server address is set. It may still be unreachable. */
+export const backendConfigured: boolean = API !== '';
 const HISTORY_KEY = 'nullspace.runs.v2'; // v2: seven tasks
 
 export interface RunStart {

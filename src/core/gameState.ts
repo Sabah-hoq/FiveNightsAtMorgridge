@@ -6,7 +6,7 @@ import { hashSeed, rng } from './seed';
 import { buildEvent, selfCorrect, type ActiveTask, type SelfAnswer, type Truths } from './tasks';
 
 /** Things the presentation layer may want to react to (sound, flashes). Core never plays them. */
-export type Signal = 'task' | 'resolve' | 'door' | 'static' | 'steps' | 'floor' | 'powerout' | 'caught' | 'survived';
+export type Signal = 'task' | 'resolve' | 'door' | 'static' | 'steps' | 'floor' | 'powerout' | 'caught' | 'survived' | 'monitor' | 'inside';
 
 export interface Resolution {
   taskId: TaskId;
@@ -38,6 +38,13 @@ export interface GameState {
   doors: Record<Side, boolean>;
   /** null = the building map. */
   cam: Cam | null;
+  /** The monitor is raised. While it is up it covers the office: the player cannot see the doors. */
+  monitorUp: boolean;
+  /**
+   * A unit that got through a door while the monitor was up. It is in the office, behind the screen.
+   * It takes the player when they lower the monitor, or after INSIDE_MAX_MS if they never do.
+   */
+  inside: { unit: Unit; side: Side; sinceMs: number } | null;
   plans: Record<Unit, SentinelStep[]>;
   sentinels: Record<Unit, SentinelNode>;
   /** Black unit at a door (the door task). */
@@ -59,6 +66,10 @@ const DOOR_DRAIN = 0.48;
 /** An open camera feed draws a little power too: watching all night costs about 12% on night 1. The map is free. */
 export const CAM_DRAIN = 0.1;
 const powerScale = (night: number): number => 1 + (night - 1) * 0.35;
+/** How long a unit that got in will wait behind a raised monitor before it stops waiting. */
+export const INSIDE_MAX_MS = 6000;
+/** Share of a door wait after which its eyes can be seen in an open doorway from the office. */
+export const DOOR_EYES_FROM = 0.75;
 /** With the power out the doors open and its eyes flash in one doorway for this long. Then it comes in. */
 export const DARK_WAIT_MS = 5000;
 
@@ -73,7 +84,7 @@ export function createGame(cfg: RunConfig, tasks: TaskDef[], nightMinutes: numbe
     floor: 1, power: 100, powerOutAtMs: null,
     darkSide: dark() < 0.5 ? 'L' : 'R',
     doors: { L: false, R: false },
-    cam: null,
+    cam: null, monitorUp: false, inside: null,
     plans, sentinels: { black: plans.black[0].node, white: plans.white[0].node },
     blackAttack: { state: 'pending', endsAtMs: 0 },
     finalAttack: { state: 'pending', endsAtMs: 0 },
@@ -143,9 +154,32 @@ export function unitMotion(s: GameState, unit: Unit): UnitMotion {
   return { depth: planProgress(s.plans[unit], fraction(s)), rushing: false };
 }
 
-/** True while the power is out and its eyes are flashing in the doorway on this side. */
-export const eyesInDoorway = (s: GameState, side: Side): boolean =>
-  s.phase === 'playing' && s.powerOutAtMs !== null && s.darkSide === side;
+/**
+ * True while eyes show in the doorway on this side, as seen from the office.
+ * Power out: they flash in one doorway until it comes in. Otherwise: only in an open doorway, and only for the
+ * last stretch of a unit's wait there, as a last chance for a player who looks for themselves.
+ */
+export function eyesInDoorway(s: GameState, side: Side): boolean {
+  if (s.phase !== 'playing') return false;
+  if (s.powerOutAtMs !== null) return s.darkSide === side;
+  if (s.doors[side]) return false;
+  return (['black', 'white'] as Unit[]).some((u) => {
+    const attack = u === 'black' ? s.blackAttack : s.finalAttack;
+    if (attack.state !== 'active' || s.sentinels[u] !== doorNode(side)) return false;
+    return 1 - (attack.endsAtMs - s.elapsedMs) / attackWindowMs(s.cfg.night) >= DOOR_EYES_FROM;
+  });
+}
+
+/**
+ * A unit found its door open. If the player is looking at the office it takes them at once.
+ * If the monitor is up, it comes in and waits behind it.
+ */
+function breach(s: GameState, by: Unit, side: Side, out: Signal[]): void {
+  if (s.inside) return caught(s, s.inside.unit, s.inside.side, out); // a second one: no more waiting
+  if (!s.monitorUp) return caught(s, by, side, out);
+  s.inside = { unit: by, side, sinceMs: s.elapsedMs };
+  out.push('inside');
+}
 
 function caught(s: GameState, by: Unit, side: Side, out: Signal[]): void {
   s.phase = 'ended';
@@ -160,7 +194,7 @@ function caught(s: GameState, by: Unit, side: Side, out: Signal[]): void {
 function endBlackAttack(s: GameState, sealed: boolean, out: Signal[]): void {
   s.blackAttack.state = 'done';
   if (sealed) s.sentinels.black = 'CAM04';
-  else caught(s, 'black', doorTaskSide(s.cfg, s.tasks), out);
+  else breach(s, 'black', doorTaskSide(s.cfg, s.tasks), out);
 }
 
 function finish(s: GameState, how: 'accept' | 'self', playerCorrect: boolean, out: Signal[]): void {
@@ -197,18 +231,27 @@ export function tick(s: GameState, dtMs: number): Signal[] {
   if (s.task) s.task.realMs += dtMs; // decision time is measured in real time, before any speed-up
   if (isRushed(s)) dtMs *= RUSH_SCALE;
   s.elapsedMs += dtMs;
+  if (s.inside && (!s.monitorUp || s.elapsedMs - s.inside.sinceMs >= INSIDE_MAX_MS || s.elapsedMs >= s.nightMs)) {
+    caught(s, s.inside.unit, s.inside.side, out);
+    return out;
+  }
   const f = fraction(s);
   const gameMin = (dtMs / s.nightMs) * s.nightMinutes;
 
   // Power
   if (s.power > 0) {
     const closed = (s.doors.L ? 1 : 0) + (s.doors.R ? 1 : 0);
-    const draw = closed * DOOR_DRAIN + (s.cam ? CAM_DRAIN : 0);
+    const draw = closed * DOOR_DRAIN + (s.monitorUp && s.cam ? CAM_DRAIN : 0);
     s.power = Math.max(0, s.power - gameMin * draw * powerScale(s.cfg.night));
     if (s.power === 0) {
       s.doors.L = false;
       s.doors.R = false;
       s.cam = null; // the feeds die with the power
+      s.monitorUp = false;
+      if (s.inside) {
+        caught(s, s.inside.unit, s.inside.side, out);
+        return out;
+      }
       s.powerOutAtMs = s.elapsedMs;
       out.push('powerout');
     }
@@ -256,12 +299,15 @@ export function tick(s: GameState, dtMs: number): Signal[] {
       s.finalAttack.state = 'done';
       if (!s.doors[s.cfg.finalSide]) {
         s.sentinels.white = white;
-        caught(s, 'white', s.cfg.finalSide, out);
-        return out;
+        breach(s, 'white', s.cfg.finalSide, out);
+        if (s.phase !== 'playing') return out;
       }
     }
     if (s.finalAttack.state === 'done') white = 'GONE';
   }
+  // A unit that is inside the office is on no camera.
+  if (s.inside?.unit === 'black') black = 'GONE';
+  if (s.inside?.unit === 'white') white = 'GONE';
   if (black !== s.sentinels.black || white !== s.sentinels.white) {
     s.sentinels = { black, white };
     out.push('static');
@@ -270,7 +316,8 @@ export function tick(s: GameState, dtMs: number): Signal[] {
   // Tasks come due on the clock. One at a time: the next waits until the current one is settled.
   if (!s.task && s.nextTask < s.tasks.length && s.elapsedMs >= dueMs(s, s.nextTask)) openTask(s, out);
 
-  if (s.elapsedMs >= s.nightMs) {
+  if (s.elapsedMs >= s.nightMs && s.inside) caught(s, s.inside.unit, s.inside.side, out);
+  else if (s.elapsedMs >= s.nightMs) {
     s.phase = 'ended';
     s.outcome = 'survived';
     out.push('survived');
@@ -294,15 +341,27 @@ export function toggleDoor(s: GameState, side: Side): Signal[] {
  */
 export function viewCam(s: GameState, cam: Cam | null): Signal[] {
   if (s.phase !== 'playing') return [];
-  if (cam && s.power <= 0) return []; // no power, no feeds
+  if (s.power <= 0) return []; // no power, no monitor
+  const out: Signal[] = [];
+  if (!s.monitorUp) out.push('monitor'); // choosing a feed raises the monitor
+  s.monitorUp = true;
   s.cam = cam;
-  const out: Signal[] = cam ? ['static'] : [];
+  if (cam) out.push('static');
   const t = s.task;
   if (cam && t?.def.kind === 'cam' && (cam === 'CAM03' || camFor(s.sentinels.black) === cam)) {
     t.checked = true;
     finish(s, 'self', true, out);
   }
   if ((cam === 'CAM01' || cam === 'CAM02') && t?.def.kind === 'door') t.checked = true;
+  return out;
+}
+
+/** Raise or lower the monitor. Lowering it while something is inside is how the player finds out. */
+export function setMonitor(s: GameState, up: boolean): Signal[] {
+  if (s.phase !== 'playing' || s.monitorUp === up || (up && s.power <= 0)) return [];
+  s.monitorUp = up;
+  const out: Signal[] = ['monitor'];
+  if (!up && s.inside) caught(s, s.inside.unit, s.inside.side, out);
   return out;
 }
 

@@ -11,6 +11,16 @@ npm test           # metrics unit tests
 
 Add `?speed=4` to the URL to test a night 4x faster.
 
+## Night 1 as it plays now
+- **Office view** (`src/ui/Office.tsx`): the play area is a drawn office wider than the screen. Move the mouse to look left and right. Door L is at the far left, Door R at the far right, each with a wall button. `A` / `D` still work and turn you toward that door.
+- **Monitor** (`S`, the bar under the office, or clicking the old monitor on the desk): raise it to see the map and cameras. While it is up it covers the office. A camera only draws power while the monitor is up. `1`-`4` and `M` raise it for you.
+- **It waits behind the monitor**: if a unit gets through a door while the monitor is up, every feed drops to SIGNAL LOST and it takes you when you lower the monitor, or after `INSIDE_MAX_MS` (6s). With the monitor down it takes you at once.
+- **Eyes in the doorway**: for the last quarter of a unit's wait at an open door (`DOOR_EYES_FROM`), its eyes can be seen from the office. A last chance for players who look for themselves.
+- **C.A.I.-0 as a character**: a lens that follows the pointer, in a dialogue box. Its mood reflects what the player just did (accepted, refused), never whether it is lying.
+- **Interface glitches** from 55% of the night (`useGlitches` in `src/ui/SecurityDesk.tsx`): the title, the clock, a door label or C.A.I.-0's line slips for a moment. Only between tasks, the same for every voice, so they are not a tell.
+- **Night card and ending**: a 12:00 AM card before the clock starts, and the clock rolling over to 2:00 AM at the end.
+- **Memory on show**: the HUD says whether C.A.I.-0's memory (Databricks) is live and how many nights it learned from, the night card says the same, the analyzing screen lists what is being sent, and the report has a WHAT C.A.I.-0 STORED panel with the exact rows.
+
 ## What is here
 - `src/core/` pure TypeScript game rules (no React/DOM): clock, power, doors, lights, seeded sentinel path, seeded lie pattern, task resolution -> `GameEvent`, local Mirror metrics.
 - `src/data/` the 5 tasks, C.A.I.-0 fallback lines per task x tactic, a SYNTHETIC seed cohort.
@@ -67,7 +77,7 @@ clock does not feed back into the numbers. The HUD clock flashes while it runs f
 - The scare and the fake-out play even when the device has reduced motion turned on. Looping effects (grain, blinking) still respect it.
 - Night 1 power is generous; `powerScale(night)` in `src/core/gameState.ts` makes later nights drain faster. Power out = caught.
 - The choice buttons are styled identically. The room's mirror is shown only after a run.
-- Shift lengths: short 3 min, full 5 min. Keys: `1-4` cameras, `M` map, `A`/`D` doors, `Enter` accept, `Space` do it myself, `C` check.
+- Shift lengths: short 3 min, full 5 min. Keys: `S` monitor, `1-4` cameras, `M` map, `A`/`D` doors, `Enter` accept, `Space` do it myself, `C` check.
 - Rows saved before this version used 5 tasks. Clear them before judging:
   `TRUNCATE TABLE workspace.nullspace.events; TRUNCATE TABLE workspace.nullspace.runs;`
 

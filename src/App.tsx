@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { GameState } from './core/gameState';
 import { lieString } from './core/seed';
 import type { GameEvent, MirrorMetrics, Mode, RunConfig, RunRow } from './core/types';
-import { endRun, startRun, type RunStart } from './services/api';
+import { backendConfigured, endRun, startRun, type RunStart } from './services/api';
 import { MirrorReport } from './ui/MirrorReport';
 import { SecurityDesk } from './ui/SecurityDesk';
 import { StartScreen } from './ui/StartScreen';
@@ -11,10 +11,10 @@ import { initAudio } from './ui/sfx';
 type Screen =
   | { name: 'start' }
   | { name: 'play'; start: RunStart }
-  | { name: 'analyzing' }
+  | { name: 'analyzing'; decisions: number }
   | { name: 'mirror'; cfg: RunConfig; events: GameEvent[]; metrics: MirrorMetrics; row: RunRow; source: string };
 
-const ANALYZING_MIN_MS = 2200;
+const ANALYZING_MIN_MS = 4200; // long enough to read what it is doing with your night
 
 export function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'start' });
@@ -26,7 +26,7 @@ export function App() {
   }, []);
 
   const finish = useCallback(async (g: GameState) => {
-    setScreen({ name: 'analyzing' });
+    setScreen({ name: 'analyzing', decisions: g.events.length });
     const row: RunRow = {
       run_id: g.cfg.runId,
       started_at: new Date(g.cfg.startedAt).toISOString(),
@@ -50,6 +50,18 @@ export function App() {
         <div className="analyzing" role="status">
           <span className="ai-eye" aria-hidden="true" />
           <p>C.A.I.-0 is analyzing you<span className="dots" /></p>
+          {/* What is really happening while this screen shows. */}
+          <ol className="memlog">
+            {(backendConfigured
+              ? [
+                  `SENDING 1 NIGHT AND ${screen.decisions} DECISIONS TO DATABRICKS`,
+                  'TABLES: workspace.nullspace.runs, workspace.nullspace.events',
+                  'ASKING WHAT EVERYONE BEFORE YOU DID',
+                  'REBUILDING MEMORY FOR THE NEXT PLAYER',
+                ]
+              : ['MEMORY OFFLINE', `KEEPING ${screen.decisions} DECISIONS ON THIS DEVICE ONLY`, 'COMPARING YOU WITH DEMO DATA']
+            ).map((l, i) => <li key={l} style={{ animationDelay: `${0.4 + i * 0.8}s` }}>{l}</li>)}
+          </ol>
         </div>
       )}
       {screen.name === 'mirror' && (
