@@ -9,9 +9,7 @@ import type { Cam, Side, TaskKind } from '../core/types';
 import { ACCEPT_ACK, IDLE_LINE, SELF_ACK } from '../data/fallbackLines';
 import { AI_OUTPUT, ALERTS, MANUAL_CODES, NIGHT_MINUTES, NOTE_LINES, T2, TASKS, TRUTHS } from '../data/tasks';
 import { logEvent, type RunStart } from '../services/api';
-import blackImg from '../assets/sentinel.jpg';
-import whiteImg from '../assets/sentinel-white.jpg';
-import { CameraGrid, CAMS } from './CameraGrid';
+import { CameraGrid, CAMS, ScareFace } from './CameraGrid';
 import { GAME_TITLE } from './CertLine';
 import { sfx, toggleMute } from './sfx';
 
@@ -292,7 +290,7 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
 
       {g.outcome === 'caught' && (
         <div className="jump" role="alert">
-          <img src={g.caughtBy === 'white' ? whiteImg : blackImg} alt="" />
+          <ScareFace unit={g.caughtBy ?? 'black'} />
           <p>IT GOT IN<br /><small>{g.caughtAt}</small></p>
         </div>
       )}
