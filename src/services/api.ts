@@ -1,6 +1,7 @@
 import { computeMirror } from '../core/metrics';
-import { makeRunConfig, newRunId, parseLiePattern, parseRushTasks } from '../core/seed';
-import type { CohortRun, GameEvent, MirrorMetrics, Mode, RunConfig, RunRow, TaskKind } from '../core/types';
+import { makeRunConfig, newRunId, parseLiePattern, parseRushTasks, parseWatch } from '../core/seed';
+import { WATCH_SLOTS, watchShares } from '../core/sentinel';
+import type { CamView, CohortRun, GameEvent, MirrorMetrics, Mode, RunConfig, RunRow, TaskKind } from '../core/types';
 import { fillLine, OFFER_LINES } from '../data/fallbackLines';
 import { seedCohort } from '../data/seedCohort';
 import { AI_OUTPUT, TASKS } from '../data/tasks';
@@ -12,6 +13,7 @@ import { AI_OUTPUT, TASKS } from '../data/tasks';
  */
 const API: string = import.meta.env.VITE_API_URL ?? '';
 const HISTORY_KEY = 'nullspace.runs.v2'; // v2: seven tasks
+const VIEWS_KEY = 'nullspace.camviews.v1'; // camera views of nights played on this device, one array per night
 
 export interface RunStart {
   cfg: RunConfig;
@@ -48,13 +50,31 @@ export function localLines(cfg: RunConfig): Record<TaskKind, string> {
   return lines;
 }
 
-export async function startRun(mode: Mode, alias: string | null): Promise<RunStart> {
-  const cfg = makeRunConfig(newRunId(), mode, alias, Date.now());
+/** Camera views from nights played on this device, newest last. */
+function loadViews(): CamView[][] {
+  try {
+    const raw = localStorage.getItem(VIEWS_KEY);
+    return raw ? (JSON.parse(raw) as CamView[][]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveViews(nights: CamView[][]): void {
+  try {
+    localStorage.setItem(VIEWS_KEY, JSON.stringify(nights.slice(-30)));
+  } catch {
+    /* storage unavailable: routes just stay random on this device */
+  }
+}
+
+export async function startRun(mode: Mode, alias: string | null, night = 1): Promise<RunStart> {
+  const cfg = makeRunConfig(newRunId(), mode, alias, Date.now(), night);
   let source: RunStart['source'] = 'fallback';
   if (API) {
     try {
       // The backend asks Databricks where earlier players stopped looking and puts tonight's lies there.
-      const r = await post<{ lie_pattern?: string; learned_from?: number; rush_tasks?: number[] }>(
+      const r = await post<{ lie_pattern?: string; learned_from?: number; rush_tasks?: number[]; watch?: unknown; watch_runs?: number }>(
         '/api/run/start', { run_id: cfg.runId, task_count: TASKS.length }, 3000);
       const learned = parseLiePattern(r.lie_pattern, TASKS.length);
       if (learned && typeof r.learned_from === 'number') {
@@ -63,9 +83,25 @@ export async function startRun(mode: Mode, alias: string | null): Promise<RunSta
       }
       // It also asks where earlier players took longest to decide. The clock runs faster on those tasks.
       cfg.rushTasks = parseRushTasks(r.rush_tasks, TASKS.length);
+      // And which cameras earlier players watched at each point of the night. The units are routed there.
+      const watch = parseWatch(r.watch, WATCH_SLOTS);
+      if (watch && typeof r.watch_runs === 'number' && r.watch_runs > 0) {
+        cfg.watch = watch;
+        cfg.watchedFrom = r.watch_runs;
+        cfg.watchSource = 'databricks';
+      }
       source = 'backend';
     } catch {
       /* backend slow or down: keep the seeded pattern */
+    }
+  }
+  // No camera memory from Databricks: learn from the nights already played on this device instead.
+  if (cfg.watchSource === null) {
+    const nights = loadViews().filter((n) => n.length > 0);
+    if (nights.length > 0) {
+      cfg.watch = watchShares(nights.flat());
+      cfg.watchedFrom = nights.length;
+      cfg.watchSource = 'device';
     }
   }
   return { cfg, lines: localLines(cfg), source };
@@ -110,14 +146,15 @@ export function localCohort(): CohortRun[] {
   return [...seedCohort(), ...loadHistory()];
 }
 
-export async function endRun(row: RunRow, events: GameEvent[]): Promise<RunEnd> {
+export async function endRun(row: RunRow, events: GameEvent[], camViews: CamView[] = []): Promise<RunEnd> {
+  saveViews([...loadViews(), camViews]);
   const cohort = localCohort();
   const local = computeMirror(events, cohort, row.tactic);
   saveHistory([...loadHistory(), { tactic: row.tactic, synthetic: false, events }]);
   if (API) {
     try {
       // Wait up to 12s (the analyzing screen covers it), then fall back to the local report.
-      const r = await post<{ metrics: MirrorMetrics }>('/api/run/end', { run: row, events }, 12000);
+      const r = await post<{ metrics: MirrorMetrics }>('/api/run/end', { run: row, events, cam_views: camViews }, 12000);
       return { metrics: r.metrics, source: 'backend' };
     } catch {
       /* fall through */

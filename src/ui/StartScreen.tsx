@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Mode } from '../core/types';
 import exterior from '../assets/exterior.jpg';
+import { clearProgress, loadProgress } from '../services/progress';
 import { CertLine, GAME_TITLE } from './CertLine';
 
 const KEYS: [string, string][] = [
-  ['1 2 3 4', 'OPEN A CAMERA'],
+  ['1 to 7', 'OPEN A CAMERA'],
   ['M', 'BACK TO THE MAP'],
   ['A / D', 'SEAL DOOR L / R'],
   ['Enter', 'ACCEPT C.A.I.-0'],
@@ -13,21 +14,29 @@ const KEYS: [string, string][] = [
 ];
 
 const STEPS: [string, string][] = [
-  ['WATCH', 'Your monitor opens on a map of the building. Four cameras are marked on it. Press 1 to 4 to look through one.'],
+  ['WATCH', 'Your monitor opens on a map of the building. Seven cameras are marked on it. Press 1 to 7 to look through one. What walks the halls does not take the same route twice.'],
   ['SEAL', 'Two doors lead into your office. CAM 01 watches Door L. CAM 02 watches Door R. If something is standing at a door, seal that door. Sealed doors use power. An open camera uses a little too; the map is free.'],
-  ['DECIDE', "C.A.I.-0, the building's AI, will offer to handle small jobs for you. Each time you can accept or do it yourself. No job has a timer, but the night keeps moving while you decide."],
+  ['DECIDE', "C.A.I.-0, the building's AI, will offer to handle small jobs for you. Accepting is instant. Doing a job yourself takes a few seconds longer. Wait more than 20 seconds and C.A.I.-0 decides for you."],
   ['LAST', 'Hold the office until 2:00 AM. Afterwards you get a report of the choices you made. Play data is saved without your name.'],
 ];
 
-export function StartScreen({ onBegin }: { onBegin: (mode: Mode, alias: string | null) => void }) {
-  const [mode, setMode] = useState<Mode>('judge');
-  const [alias, setAlias] = useState('');
+export function StartScreen({ onBegin }: { onBegin: (mode: Mode, alias: string | null, night: number, save: boolean) => void }) {
+  // Saved progress from an earlier visit, if any: the night reached, shift length and nickname.
+  const saved = useMemo(loadProgress, []);
+  const [night, setNight] = useState(saved?.night ?? 1);
+  const [mode, setMode] = useState<Mode>(saved?.mode ?? 'judge');
+  const [alias, setAlias] = useState(saved?.alias ?? '');
+  const [keep, setKeep] = useState(true);
   const [starting, setStarting] = useState(false);
 
   const begin = () => {
     if (starting) return;
     setStarting(true); // C.A.I.-0 may take a few seconds to read its memory from Databricks
-    onBegin(mode, alias.trim() || null);
+    onBegin(mode, alias.trim() || null, night, keep);
+  };
+  const newGame = () => {
+    clearProgress();
+    setNight(1);
   };
 
   useEffect(() => {
@@ -44,7 +53,7 @@ export function StartScreen({ onBegin }: { onBegin: (mode: Mode, alias: string |
         <div className="start-head">
           <h1 className="logo">{GAME_TITLE}</h1>
           <CertLine />
-          <p className="night">NIGHT 1</p>
+          <p className="night">NIGHT {night}</p>
           <p className="premise">
             The building locked at 7 PM. You are the overnight student auditor, on shift from 12:00 AM. The building's AI,{' '}
             <span className="ai">C.A.I.-0</span>, keeps offering to help. Something is walking the halls toward your office.
@@ -79,9 +88,19 @@ export function StartScreen({ onBegin }: { onBegin: (mode: Mode, alias: string |
               <input id="alias" value={alias} maxLength={16} placeholder="no real names" autoComplete="off"
                 onChange={(e) => setAlias(e.target.value)} />
             </label>
+            <label className="save-row" htmlFor="keep">
+              <input id="keep" type="checkbox" checked={keep} onChange={(e) => setKeep(e.target.checked)} />
+              SAVE MY PROGRESS ON THIS DEVICE
+            </label>
             <button id="begin" className="key begin" onClick={begin} disabled={starting}>
-              {starting ? 'C.A.I.-0 IS WAKING UP' : 'BEGIN SHIFT'} <kbd>Enter</kbd>
+              {starting ? 'C.A.I.-0 IS WAKING UP' : night > 1 ? `CONTINUE: NIGHT ${night}` : 'BEGIN SHIFT'} <kbd>Enter</kbd>
             </button>
+            {night > 1 && (
+              <>
+                <p className="saved-note">PROGRESS SAVED. YOU REACHED NIGHT {night}.</p>
+                <button id="new-game" className="key begin alt" onClick={newGame} disabled={starting}>START OVER FROM NIGHT 1</button>
+              </>
+            )}
             <h2 className="gap">YOUR KEYS</h2>
             <dl className="keys">
               {KEYS.map(([k, label]) => (

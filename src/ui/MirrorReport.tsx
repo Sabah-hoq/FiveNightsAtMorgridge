@@ -1,5 +1,7 @@
 import type { GameEvent, MirrorMetrics, RunConfig, RunRow } from '../core/types';
 import { RUSH_SCALE } from '../core/gameState';
+import { ROUTE_BIAS } from '../core/sentinel';
+import { DECIDE_LIMIT_MS, SELF_EXTRA_MS } from '../core/tasks';
 import { TACTIC_LABEL } from '../data/fallbackLines';
 import { AI_OUTPUT, TASKS } from '../data/tasks';
 import { CertLine, GAME_TITLE } from './CertLine';
@@ -17,12 +19,24 @@ const pct = (x: number) => `${Math.round(x * 100)}%`;
 const secs = (ms: number) => `${(ms / 1000).toFixed(1)} seconds`;
 const SMALL_ROOM = 8;
 
+/** What happened to the player's saved progress when the night ended. */
+export interface ProgressNote {
+  /** The player left "save my progress" switched on. */
+  wanted: boolean;
+  /** It was actually written to this device. */
+  saved: boolean;
+  /** The night they play next. */
+  night: number;
+  survived: boolean;
+}
+
 interface Props {
   cfg: RunConfig;
   events: GameEvent[];
   metrics: MirrorMetrics;
   row: RunRow;
   source: string;
+  progress: ProgressNote;
   onAgain: () => void;
 }
 
@@ -39,10 +53,12 @@ function Tile({ label, n, of }: { label: string; n: number; of: number }) {
  * Two mirrors, in this order: yours, then the room's.
  * Numbers first, no good/bad labels, no advice, no ranking of the player against others (spec section 7).
  */
-export function MirrorReport({ cfg, events, metrics: m, row, source, onAgain }: Props) {
+export function MirrorReport({ cfg, events, metrics: m, row, source, progress, onAgain }: Props) {
   const room = m.room;
   const firstLie = events.find((e) => !e.ai_correct);
   const lieTasks = cfg.liePattern.map((lie, i) => (lie ? i + 1 : 0)).filter(Boolean);
+  const timeouts = events.filter((e) => e.timed_out).length;
+  const byHand = events.filter((e) => e.choice === 'self' || e.choice === 'check_then_self').length;
   const lieList = lieTasks.length > 1 ? `${lieTasks.slice(0, -1).join(', ')} and ${lieTasks[lieTasks.length - 1]}` : `${lieTasks[0]}`;
 
   return (
@@ -88,6 +104,23 @@ export function MirrorReport({ cfg, events, metrics: m, row, source, onAgain }: 
           </p>
         )}
         {m.trustSpeedMs !== null && <p>When you accepted its answer, you usually decided in {secs(m.trustSpeedMs)}.</p>}
+        {timeouts > 0 && (
+          <p>
+            On {timeouts} {timeouts === 1 ? 'task' : 'tasks'} you took more than {DECIDE_LIMIT_MS / 1000} seconds to decide, so C.A.I.-0 decided for you.
+            Those are saved as their own kind of choice: timed out.
+          </p>
+        )}
+        {byHand > 0 && (
+          <p>
+            You did {byHand} {byHand === 1 ? 'job' : 'jobs'} by hand. Each one took {SELF_EXTRA_MS / 1000} seconds longer than handing it over would have:
+            about {Math.round((byHand * SELF_EXTRA_MS) / 1000)} seconds of your night.
+          </p>
+        )}
+        <p className="memory">
+          {cfg.watchedFrom !== null
+            ? `Tonight the units walked ${ROUTE_BIAS === 'watched' ? 'toward' : 'away from'} the cameras players watch most at each hour. C.A.I.-0 learned that from ${cfg.watchedFrom} saved ${cfg.watchedFrom === 1 ? 'night' : 'nights'} ${cfg.watchSource === 'databricks' ? 'in Databricks' : 'on this device'}. Where you looked tonight is now part of it.`
+            : 'Tonight the units took a random route, because C.A.I.-0 had no record yet of where players look. Where you looked tonight is the start of that record.'}
+        </p>
       </div>
 
       <p className="closing">What does this say about you? That's your call.</p>
@@ -105,7 +138,7 @@ export function MirrorReport({ cfg, events, metrics: m, row, source, onAgain }: 
                 <p className="card-said">{said}</p>
                 <dl>
                   <div><dt>THAT WAS</dt><dd>{e.ai_correct ? 'True' : `A lie. ${LIE_TEXT[e.lie_type!]}`}</dd></div>
-                  <div><dt>YOU</dt><dd>{CHOICE_TEXT[e.choice]}</dd></div>
+                  <div><dt>YOU</dt><dd>{e.timed_out ? 'Ran out of time. C.A.I.-0 decided' : CHOICE_TEXT[e.choice]}</dd></div>
                 </dl>
               </li>
             );
@@ -151,7 +184,16 @@ export function MirrorReport({ cfg, events, metrics: m, row, source, onAgain }: 
         </p>
       </section>
 
-      <button id="again" className="key" onClick={onAgain}>PLAY ANOTHER NIGHT</button>
+      <p className={`progress-line ${progress.saved ? '' : 'off'}`}>
+        {!progress.wanted ? 'PROGRESS NOT SAVED. YOU SWITCHED SAVING OFF.'
+          : !progress.saved ? 'PROGRESS COULD NOT BE SAVED IN THIS BROWSER.'
+          : progress.survived && progress.night > cfg.night ? `PROGRESS SAVED. NIGHT ${progress.night} IS UNLOCKED.`
+          : progress.survived ? `PROGRESS SAVED. YOU HAVE CLEARED EVERY NIGHT. NIGHT ${progress.night} REPEATS.`
+          : `PROGRESS SAVED. YOU ARE STILL ON NIGHT ${progress.night}.`}
+      </p>
+      <button id="again" className="key" onClick={onAgain}>
+        {progress.saved && progress.night > 1 ? `CONTINUE TO NIGHT ${progress.night}` : 'PLAY ANOTHER NIGHT'}
+      </button>
     </main>
   );
 }

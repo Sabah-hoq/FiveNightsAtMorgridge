@@ -5,7 +5,7 @@ import type { RunConfig } from './types';
 
 const cfg: RunConfig = {
   runId: 't', mode: 'judge', tactic: 'helpful', liePattern: [false, false, false, false, false, false, false],
-  learnedFrom: null, rushTasks: [], claimedSide: 'L', night: 1, finalSide: 'R', jitter: 0, alias: null, startedAt: 0,
+  learnedFrom: null, rushTasks: [], watch: [], watchedFrom: null, watchSource: null, claimedSide: 'L', night: 1, finalSide: 'R', jitter: 0, alias: null, startedAt: 0,
 };
 const game = (over: Partial<RunConfig> = {}) => createGame({ ...cfg, ...over }, TASKS, NIGHT_MINUTES, TRUTHS);
 /** Advance by in-game minutes, in small ticks like the UI does. */
@@ -40,11 +40,13 @@ describe('camera power drain', () => {
 });
 
 describe('unit motion', () => {
-  it('drifts closer while it waits in a hall', () => {
+  it('drifts closer while it waits in one place', () => {
     const g = game();
-    run(g, 5);
+    run(g, 1);
     const early = unitMotion(g, 'black').depth;
-    run(g, 20);
+    const where = g.sentinels.black;
+    run(g, 6); // its first stay lasts at least 10 in-game minutes
+    expect(g.sentinels.black).toBe(where);
     expect(unitMotion(g, 'black').depth).toBeGreaterThan(early);
     expect(unitMotion(g, 'black').rushing).toBe(false);
   });

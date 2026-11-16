@@ -42,6 +42,22 @@ Tasks 1 and 2 stay honest. It needs at least 3 saved nights to learn; before tha
 (3s), the game uses the seeded random pattern. The report tells the player which tasks were chosen and why.
 The memory is cached on the server and refreshed after every finished night.
 
+**New table.** Camera views are saved to `workspace.nullspace.cam_views`. If you created the tables before this
+was added, run `server/sql/create_tables.sql` again (it only adds what is missing). Until then nights still save,
+routes just stay random, and `/api/health` shows `"cam_views": null`.
+
+Useful queries:
+
+```sql
+-- Where players look, by slot of the night (0 = 12:00-12:20 ... 5 = 1:40-2:00)
+SELECT slot, cam, SUM(view_ms) / 1000 AS seconds, COUNT(DISTINCT run_id) AS nights
+FROM workspace.nullspace.cam_views GROUP BY slot, cam ORDER BY slot, seconds DESC;
+
+-- How often players run out the 20 seconds, by task
+SELECT task_id, COUNT(*) AS decisions, SUM(CASE WHEN timed_out THEN 1 ELSE 0 END) AS timed_out
+FROM workspace.nullspace.events GROUP BY task_id ORDER BY task_id;
+```
+
 The same query also returns the median time players take to decide on each task. The two slowest tasks come back as
 `rush_tasks`, and the night clock runs `RUSH_SCALE` (1.5) times faster while one of them is open, so hesitating costs
 more exactly where people hesitate. The door task is never rushed. Decision time is saved in real time, so the faster
@@ -65,9 +81,14 @@ clock does not feed back into the numbers. The HUD clock flashes while it runs f
 - Units stand still most of the time and relocate in short bursts (`BEAT_MS`, `MOVE_CHANCE` in `src/ui/CameraGrid.tsx`). They only get closer while moving.
 - Ambience (`src/ui/sfx.ts`): clashing low drones, a drifting high whine, wind, and a random building sound every 8 to 24 seconds. `setDread` raises it through the night, `setHeartbeat` runs while something is at a door, and everything cuts to silence just before the scream.
 - The scare and the fake-out play even when the device has reduced motion turned on. Looping effects (grain, blinking) still respect it.
+- **Seven cameras.** CAM 05 (main entrance), CAM 06 (cafe) and CAM 07 (study lounge) join the first four. Keys `1` to `7`.
+- **Routes adapt to where players look.** The units no longer walk CAM 04 > CAM 03 > door every night. They wander CAM 04 to 07, then come to CAM 03, then a door. Each stop is picked from where players watched at that time of night (`cfg.watch`); a unit may also stay where it is. The game saves how long each camera was watched in six 20-minute slots (`cam_views` table) and reads the shares back before the next night. With no server it learns from nights played on this device. `ROUTE_BIAS` in `src/core/sentinel.ts` flips between going to the most-watched cameras (`'watched'`, the default) and avoiding them (`'unwatched'`).
+- **Doing a job yourself takes longer.** After choosing to do it yourself, the answer cannot be locked in for `SELF_EXTRA_MS` (3.5 s, `src/core/tasks.ts`). Accepting C.A.I.-0 is instant.
+- **20 seconds to decide.** If an offer sits for `DECIDE_LIMIT_MS` (20 s real time), C.A.I.-0's answer is applied and the event is saved with `timed_out = true` (choice stays `accept`). The door task never reaches it: its own wait is shorter.
+- **Saved progress.** Surviving a night unlocks the next (up to night 5) and saves it in the browser, with shift length and nickname (`src/services/progress.ts`). The start screen offers CONTINUE or START OVER, and a checkbox turns saving off. Nights 2 to 5 are night 1 with the existing scaling (faster power drain, shorter door waits) until they are designed.
 - Night 1 power is generous; `powerScale(night)` in `src/core/gameState.ts` makes later nights drain faster. Power out = caught.
 - The choice buttons are styled identically. The room's mirror is shown only after a run.
-- Shift lengths: short 3 min, full 5 min. Keys: `1-4` cameras, `M` map, `A`/`D` doors, `Enter` accept, `Space` do it myself, `C` check.
+- Shift lengths: short 3 min, full 5 min. Keys: `1-7` cameras, `M` map, `A`/`D` doors, `Enter` accept, `Space` do it myself, `C` check.
 - Rows saved before this version used 5 tasks. Clear them before judging:
   `TRUNCATE TABLE workspace.nullspace.events; TRUNCATE TABLE workspace.nullspace.runs;`
 

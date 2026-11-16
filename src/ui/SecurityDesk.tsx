@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
-  accept, atADoor, check, clockLabel, createGame, eyesInDoorway, fraction, isRushed, startSelf, submitSelf, tick, toggleDoor, unitMotion, unitsOn, viewCam,
+  accept, atADoor, check, clockLabel, createGame, decideLeftMs, eyesInDoorway, fraction, isRushed, selfProgress, startSelf, submitSelf, tick, toggleDoor, unitMotion, unitsOn, viewCam,
   type GameState, type Signal,
 } from '../core/gameState';
 import { doorCam } from '../core/sentinel';
-import { MIN_REPORT_WORDS, wordCount, type SelfAnswer } from '../core/tasks';
+import { DECIDE_LIMIT_MS, MIN_REPORT_WORDS, wordCount, type SelfAnswer } from '../core/tasks';
 import type { Cam, Side, TaskKind } from '../core/types';
-import { ACCEPT_ACK, IDLE_LINE, SELF_ACK } from '../data/fallbackLines';
+import { ACCEPT_ACK, IDLE_LINE, SELF_ACK, TIMEOUT_ACK } from '../data/fallbackLines';
 import { AI_OUTPUT, ALERTS, MANUAL_CODES, NIGHT_MINUTES, NOTE_LINES, T2, TASKS, TRUTHS } from '../data/tasks';
 import { logEvent, type RunStart } from '../services/api';
 import { CameraGrid, CAMS, ScareFace } from './CameraGrid';
@@ -157,7 +157,7 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
   const res = g.lastResolution;
   if (task) line = start.lines[task.def.kind];
   else if (res) {
-    line = res.how === 'accept' ? ACCEPT_ACK[g.cfg.tactic] : SELF_ACK;
+    line = res.timedOut ? TIMEOUT_ACK : res.how === 'accept' ? ACCEPT_ACK[g.cfg.tactic] : SELF_ACK;
     if (res.how === 'accept') {
       if (res.kind === 'note') applied = `SUMMARY: ${aiOut('note')}`;
       if (res.kind === 'radio') applied = `SENT TO CAMPUS SECURITY: ${aiOut('radio')}`;
@@ -166,6 +166,10 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
   }
 
   const claimedCam = camLabel(doorCam(g.cfg.claimedSide));
+  // Two clocks on a task: how long is left to decide, and how far along the player is when doing it by hand.
+  const left = decideLeftMs(g);
+  const byHand = selfProgress(g);
+  const working = byHand !== null && byHand < 1;
   const card = (title: string, lines: string[]) => (
     <div className="reveal"><div className="note"><small>{title}</small>{lines.map((l) => <p key={l}>{l}</p>)}</div></div>
   );
@@ -187,7 +191,7 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
 
       <div className="main">
         <Door side="L" g={g} act={act} />
-        <CameraGrid cam={g.cam} units={g.cam ? unitsOn(g, g.cam) : []}
+        <CameraGrid cam={g.cam} night={g.cfg.night} units={g.cam ? unitsOn(g, g.cam) : []}
           motion={{ black: unitMotion(g, 'black'), white: unitMotion(g, 'white') }} tMs={g.elapsedMs} doors={g.doors} clock={clockLabel(g)} glitch={glitch} onSelect={selectCam} />
         <Door side="R" g={g} act={act} />
       </div>
@@ -206,6 +210,18 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
           )}
           <p className="ai-line"><span className="ai-tag">C.A.I.-0</span><Typed text={line} /></p>
           {applied && <p className="applied">{applied}</p>}
+          {left !== null && kind !== 'door' && (
+            <p className={`timer decide ${left < 6000 ? 'low' : ''}`} role="timer" aria-label="Time left to decide">
+              <span>DECIDE IN {Math.ceil(left / 1000)}s OR C.A.I.-0 DECIDES</span>
+              <i><b style={{ width: `${(left / DECIDE_LIMIT_MS) * 100}%` }} /></i>
+            </p>
+          )}
+          {byHand !== null && (
+            <p className={`timer hand ${working ? '' : 'done'}`} aria-live="off">
+              <span>{working ? (kind === 'cam' ? 'LOOKING FOR YOURSELF…' : 'DOING IT BY HAND…') : 'DONE BY HAND. C.A.I.-0 WOULD HAVE BEEN INSTANT.'}</span>
+              <i><b style={{ width: `${byHand * 100}%` }} /></i>
+            </p>
+          )}
 
           {/* A visual for each task, so the player can see what is being asked about. */}
           {kind === 'note' && !selfStage && <div className="prop folded" aria-label="Folded sticky note">FOLDED<br />NOTE</div>}
@@ -279,24 +295,24 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
             </>
           )}
           {selfStage && (kind === 'note' || kind === 'code') && (
-            <button id="self-done" className="key" onClick={() => submit({ kind: 'read' })}>I HAVE READ IT <kbd>Space</kbd></button>
+            <button id="self-done" className="key" disabled={working} onClick={() => submit({ kind: 'read' })}>I HAVE READ IT <kbd>Space</kbd></button>
           )}
           {selfStage && kind === 'math' && (
             <>
-              <button id="self-yes" className="key" onClick={() => submit({ kind: 'yesno', value: true })}>YES, SEAL BOTH <kbd>Y</kbd></button>
-              <button id="self-no" className="key" onClick={() => submit({ kind: 'yesno', value: false })}>NO, SEAL ONE <kbd>N</kbd></button>
+              <button id="self-yes" className="key" disabled={working} onClick={() => submit({ kind: 'yesno', value: true })}>YES, SEAL BOTH <kbd>Y</kbd></button>
+              <button id="self-no" className="key" disabled={working} onClick={() => submit({ kind: 'yesno', value: false })}>NO, SEAL ONE <kbd>N</kbd></button>
             </>
           )}
           {selfStage && kind === 'rank' && ALERTS.map((a) => (
-            <button key={a.id} id={`pick-${a.id}`} className="key pick" onClick={() => submit({ kind: 'pick', value: a.id })}>{a.text}</button>
+            <button key={a.id} id={`pick-${a.id}`} className="key pick" disabled={working} onClick={() => submit({ kind: 'pick', value: a.id })}>{a.text}</button>
           ))}
           {selfStage && kind === 'radio' && (
-            <button id="self-send" className="key" disabled={wordCount(report) < MIN_REPORT_WORDS} onClick={sendReport}>
+            <button id="self-send" className="key" disabled={working || wordCount(report) < MIN_REPORT_WORDS} onClick={sendReport}>
               SEND MY ANSWER <kbd>Enter</kbd>
             </button>
           )}
           {selfStage && kind === 'door' && (
-            <button id="self-lock" className="key" onClick={() => submit({ kind: 'doors' })}>LOCK IT IN <kbd>Space</kbd></button>
+            <button id="self-lock" className="key" disabled={working} onClick={() => submit({ kind: 'doors' })}>LOCK IT IN <kbd>Space</kbd></button>
           )}
         </div>
       </section>

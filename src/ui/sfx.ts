@@ -261,6 +261,8 @@ export function hush(seconds: number): void {
 export const sfx = {
   door: () => { tone(90, 0.22, 'square', 0.12, 0, 40); noise(0.12, 0.08); },
   static: () => noise(0.28, 0.06),
+  // The decision clock ran out: two falling notes.
+  timeout: () => { tone(520, 0.16, 'square', 0.06, 0, 300); tone(300, 0.3, 'square', 0.06, 0.16, 150); },
   fakeout: () => { noise(0.3, 0.22); tone(1900, 0.26, 'sawtooth', 0.05, 0, 2600); },
   task: () => { tone(660, 0.09, 'sine', 0.06); tone(880, 0.12, 'sine', 0.06, 0.1); },
   resolve: () => tone(440, 0.08, 'triangle', 0.05),

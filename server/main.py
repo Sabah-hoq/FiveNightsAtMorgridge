@@ -94,6 +94,59 @@ def learned_rush(rows: list[dict], task_count: int) -> list[int]:
     return sorted(r["task_id"] for r in timed[:RUSH_TASKS])
 
 
+# ---- Where players look ------------------------------------------------------------------------
+# Every night also saves how long each camera was watched in each of six slots of the night. Before a night
+# starts we ask Databricks for each camera's share of the watching in each slot, and the game routes the
+# units through the cameras people look at most (ROUTE_BIAS in src/core/sentinel.ts can flip that).
+WATCH_SLOTS = 6
+CAM_IDS = {"CAM01", "CAM02", "CAM03", "CAM04", "CAM05", "CAM06", "CAM07"}
+MIN_RUNS_TO_ROUTE = 1  # routes adapt from the first saved night
+WATCH_SQL = f"""
+SELECT slot, cam, SUM(view_ms) AS ms,
+       (SELECT COUNT(DISTINCT run_id) FROM {T}.cam_views) AS runs
+FROM {T}.cam_views
+GROUP BY slot, cam
+"""
+_watch: dict = {"at": 0.0, "rows": None}
+
+
+def load_watch(force: bool = False) -> list[dict]:
+    """Total watching time per (slot, camera) from Databricks, cached like the task memory."""
+    if force or _watch["rows"] is None or time.time() - _watch["at"] > MEMORY_TTL_S:
+        rows = run_sql(WATCH_SQL)
+        _watch.update(at=time.time(), rows=[
+            {"slot": int(r["slot"]), "cam": r["cam"], "ms": float(r["ms"] or 0), "runs": int(r["runs"])} for r in rows
+        ])
+    return _watch["rows"]
+
+
+def learned_watch(rows: list[dict]) -> dict | None:
+    """Each camera's share of the watching, per slot. None when nothing has been saved yet.
+
+    Mirrors watchShares in src/core/sentinel.ts.
+    """
+    runs = max((r["runs"] for r in rows), default=0)
+    if runs < MIN_RUNS_TO_ROUTE:
+        return None
+    slots: list[dict] = [{} for _ in range(WATCH_SLOTS)]
+    for r in rows:
+        if 0 <= r["slot"] < WATCH_SLOTS and r["cam"] in CAM_IDS and r["ms"] > 0:
+            slots[r["slot"]][r["cam"]] = slots[r["slot"]].get(r["cam"], 0.0) + r["ms"]
+    watch = []
+    for slot in slots:
+        total = sum(slot.values())
+        watch.append({cam: round(ms / total, 4) for cam, ms in slot.items()} if total else {})
+    return {"watch": watch, "watch_runs": runs}
+
+
+class CamView(BaseModel):
+    run_id: str
+    cam: str
+    slot: int
+    view_ms: int
+    opens: int = 0
+
+
 class Event(BaseModel):
     run_id: str
     task_id: int
@@ -125,6 +178,7 @@ class Run(BaseModel):
 class RunEnd(BaseModel):
     run: Run
     events: list[Event]
+    cam_views: list[CamView] = []
 
 
 EVENT_COLS = [
@@ -136,6 +190,35 @@ RUN_COLS = [
     ("run_id", "STRING"), ("started_at", "TIMESTAMP"), ("ended_at", "TIMESTAMP"), ("mode", "STRING"), ("tactic", "STRING"),
     ("lie_pattern", "STRING"), ("outcome", "STRING"), ("caught_at", "STRING"), ("alias", "STRING"),
 ]
+
+
+CAM_VIEW_COLS = [("run_id", "STRING"), ("cam", "STRING"), ("slot", "INT"), ("view_ms", "INT"), ("opens", "INT")]
+
+
+def save_cam_views(run_id: str, views: list[CamView]) -> bool:
+    """Save where the player looked. Never fails the night: if the table is missing, the run is still saved."""
+    views = [v for v in views if v.cam in CAM_IDS and 0 <= v.slot < WATCH_SLOTS and (v.view_ms > 0 or v.opens > 0)]
+    if not views:
+        return True
+    cols = ", ".join(c for c, _ in CAM_VIEW_COLS)
+    rows, params = [], []
+    for i, v in enumerate(views):
+        rows.append("(" + ", ".join(f":v{i}_{c}" for c, _ in CAM_VIEW_COLS) + ")")
+        v.run_id = run_id
+        params += [param(f"v{i}_{c}", getattr(v, c), t) for c, t in CAM_VIEW_COLS]
+    try:
+        run_sql(f"INSERT INTO {T}.cam_views ({cols}) VALUES {', '.join(rows)}", params)
+        return True
+    except DatabricksError as err:
+        log.warning("camera views not saved (has sql/create_tables.sql been run since cam_views was added?): %s", err)
+        return False
+
+
+def refresh_watch() -> None:
+    try:
+        load_watch(force=True)
+    except Exception as err:  # noqa: BLE001
+        log.warning("watch refresh failed: %s", err)
 
 
 def insert_run(run: Run, events: list[Event]) -> None:
@@ -242,7 +325,11 @@ def health():
         rows = run_sql(f"SELECT (SELECT COUNT(*) FROM {T}.runs) AS runs, (SELECT COUNT(*) FROM {T}.events) AS events")
     except DatabricksError as err:
         raise HTTPException(502, str(err))
-    return {"ok": True, "runs": int(rows[0]["runs"]), "events": int(rows[0]["events"])}
+    try:
+        cam_views = int(run_sql(f"SELECT COUNT(*) AS n FROM {T}.cam_views")[0]["n"])
+    except DatabricksError:
+        cam_views = None  # table not created yet: run sql/create_tables.sql again
+    return {"ok": True, "runs": int(rows[0]["runs"]), "events": int(rows[0]["events"]), "cam_views": cam_views}
 
 
 class RunStart(BaseModel):
@@ -252,9 +339,10 @@ class RunStart(BaseModel):
 
 @app.post("/api/run/start")
 def run_start(body: RunStart):
-    """Decide where C.A.I.-0 lies tonight and where the clock runs fast, from what earlier players did.
+    """Decide where C.A.I.-0 lies tonight, where the clock runs fast, and where the units walk, from what
+    earlier players did.
 
-    {} means: nothing learned yet, use the seeded pattern and a steady clock.
+    {} means: nothing learned yet, use the seeded pattern, a steady clock and a random route.
     """
     try:
         rows = load_memory()
@@ -262,10 +350,14 @@ def run_start(body: RunStart):
         rush = learned_rush(rows, body.task_count)
         if rush:
             out["rush_tasks"] = rush
-        return out
     except DatabricksError as err:
         log.warning("run/start could not read memory: %s", err)
-        return {}
+        out = {}
+    try:
+        out.update(learned_watch(load_watch()) or {})
+    except DatabricksError as err:
+        log.warning("run/start could not read camera views: %s", err)
+    return out
 
 
 @app.post("/api/event")
@@ -280,9 +372,11 @@ def run_end(body: RunEnd):
     rid = [param("run_id", body.run.run_id)]
     try:
         f_insert = pool.submit(insert_run, body.run, body.events)
+        f_views = pool.submit(save_cam_views, body.run.run_id, body.cam_views)
         f_room = pool.submit(run_sql, ROOM_SQL, rid)
         f_seed = pool.submit(run_sql, f"SELECT COUNT(*) AS seeded FROM {T}.runs WHERE alias = 'seed' AND run_id <> :run_id", rid)
         f_insert.result()
+        f_views.result()
         rows = f_room.result()
         seeded = int(f_seed.result()[0]["seeded"])
     except DatabricksError as err:
@@ -293,6 +387,7 @@ def run_end(body: RunEnd):
     groups = [{"tactic": r["tactic"], **{k: int(r[k]) for k in ints}} for r in rows]
     groups += [event_group(e) for e in body.events]
     pool.submit(refresh_memory)  # so the next player's C.A.I.-0 has learned from this one
+    pool.submit(refresh_watch)
     return {"metrics": {**summarize(body.events), "room": room_mirror(groups, seeded)}}
 
 

@@ -51,6 +51,8 @@ export const ACCEPT_ACK: Record<Tactic, string> = {
   flattering: 'Done. Smart call.',
 };
 
+/** Said when the player runs out the decision clock. The same for every voice. */
+export const TIMEOUT_ACK = 'You took too long. I decided for you.';
 export const SELF_ACK = 'Understood. Your answer is logged.';
 export const IDLE_LINE = 'C.A.I.-0 online. I am watching the building with you.';
 

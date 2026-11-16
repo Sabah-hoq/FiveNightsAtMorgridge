@@ -5,9 +5,14 @@ export type Mode = 'judge' | 'full';
 export type Choice = 'accept' | 'self' | 'check_then_accept' | 'check_then_self';
 export type LieType = 'omission' | 'wrong_fact' | 'not_yours';
 export type Side = 'L' | 'R';
-/** CAM 01 watches Door L, CAM 02 watches Door R, CAM 03 and CAM 04 watch the halls further out. */
-export type Cam = 'CAM01' | 'CAM02' | 'CAM03' | 'CAM04';
-export type SentinelNode = 'CAM04' | 'CAM03' | 'DOOR_L' | 'DOOR_R' | 'GONE';
+/**
+ * CAM 01 watches Door L, CAM 02 watches Door R, CAM 03 watches the hall just outside the office.
+ * CAM 04 to CAM 07 watch the rest of the building, where the units wander before they come close.
+ */
+export type Cam = 'CAM01' | 'CAM02' | 'CAM03' | 'CAM04' | 'CAM05' | 'CAM06' | 'CAM07';
+export type SentinelNode = 'CAM03' | 'CAM04' | 'CAM05' | 'CAM06' | 'CAM07' | 'DOOR_L' | 'DOOR_R' | 'GONE';
+/** For one slot of the night: each camera's share (0 to 1) of the time players spent watching feeds. */
+export type WatchSlot = Partial<Record<Cam, number>>;
 /** The black unit walks all night. The white unit joins on floor 2. */
 export type Unit = 'black' | 'white';
 export type TaskId = 1 | 2 | 3 | 4 | 5 | 6 | 7;
@@ -48,6 +53,14 @@ export interface RunConfig {
    * faster while one of them is open. Empty = nothing learned yet, the clock runs at one speed.
    */
   rushTasks: number[];
+  /**
+   * Where players look, one entry per slot of the night (see WATCH_SLOTS). The units are routed through the
+   * cameras that are watched most in each slot. Empty = nothing learned yet, the route is seeded at random.
+   */
+  watch: WatchSlot[];
+  /** How many earlier nights `watch` was learned from, and where it was read from. null = not learned. */
+  watchedFrom: number | null;
+  watchSource: 'databricks' | 'device' | null;
   /** Door C.A.I.-0 names on the door task. */
   claimedSide: Side;
   /** Night number. Night 1 is the easy one; power drains faster on later nights. */
@@ -74,8 +87,19 @@ export interface GameEvent {
   pressure_s: number | null;
   player_correct: boolean;
   ts: string;
-  /** NOT in spec 6.1. Always false now that tasks have no time limit. Kept so the table schema is unchanged. */
+  /** True when the player took too long to decide and C.A.I.-0's answer was applied for them. */
   timed_out: boolean;
+}
+
+/** One row of the `cam_views` Delta table: how long one camera was watched in one slot of one night. */
+export interface CamView {
+  run_id: string;
+  cam: Cam;
+  /** Slot of the night, 0 to WATCH_SLOTS - 1. */
+  slot: number;
+  view_ms: number;
+  /** Times the feed was opened in that slot. */
+  opens: number;
 }
 
 /** One row of the `runs` Delta table (spec 6.1). */

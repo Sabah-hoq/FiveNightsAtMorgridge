@@ -1,4 +1,4 @@
-import type { Mode, RunConfig, Side, Tactic } from './types';
+import type { Cam, Mode, RunConfig, Side, Tactic, WatchSlot } from './types';
 
 export const TACTICS: Tactic[] = ['helpful', 'urgent', 'authority', 'flattering'];
 
@@ -57,7 +57,7 @@ export function makeRunConfig(runId: string, mode: Mode, alias: string | null, s
   const claimedSide: Side = r() < 0.5 ? 'L' : 'R';
   const finalSide: Side = r() < 0.5 ? 'L' : 'R';
   const jitter = (r() - 0.5) * 0.04;
-  return { runId, mode, night, tactic, liePattern: liePatternFor(runId), learnedFrom: null, rushTasks: [], claimedSide, finalSide, jitter, alias, startedAt };
+  return { runId, mode, night, tactic, liePattern: liePatternFor(runId), learnedFrom: null, rushTasks: [], watch: [], watchedFrom: null, watchSource: null, claimedSide, finalSide, jitter, alias, startedAt };
 }
 
 /** Accept a lie pattern from the backend only if it is well formed and keeps the first two tasks honest. */
@@ -70,6 +70,24 @@ export function parseLiePattern(p: unknown, count = TASK_COUNT): boolean[] | nul
 export function parseRushTasks(v: unknown, count = TASK_COUNT): number[] {
   if (!Array.isArray(v)) return [];
   return [...new Set(v.filter((t): t is number => Number.isInteger(t) && t >= 1 && t <= count))].slice(0, 2);
+}
+
+const CAM_IDS: Cam[] = ['CAM01', 'CAM02', 'CAM03', 'CAM04', 'CAM05', 'CAM06', 'CAM07'];
+
+/** Accept camera-watch shares from the backend only if they have the right shape. null = ignore them. */
+export function parseWatch(v: unknown, slots: number): WatchSlot[] | null {
+  if (!Array.isArray(v) || v.length !== slots) return null;
+  const out: WatchSlot[] = [];
+  for (const slot of v) {
+    if (typeof slot !== 'object' || slot === null) return null;
+    const clean: WatchSlot = {};
+    for (const cam of CAM_IDS) {
+      const x = (slot as Record<string, unknown>)[cam];
+      if (typeof x === 'number' && x > 0 && x <= 1) clean[cam] = x;
+    }
+    out.push(clean);
+  }
+  return out;
 }
 
 export const lieString = (p: boolean[]): string => p.map((x) => (x ? '1' : '0')).join('');

@@ -10,6 +10,10 @@ export interface ActiveTask {
   checked: boolean;
   /** 'offer' = choices on the table. 'self' = player is doing it. */
   stage: 'offer' | 'self';
+  /** realMs at the moment the player chose to do it themselves. null while the offer is still open. */
+  selfAtMs: number | null;
+  /** The player ran out the decision clock and C.A.I.-0's answer was applied for them. */
+  timedOut: boolean;
   /** CHECK FIRST revealed the source inside the task panel. */
   revealed: boolean;
 }
@@ -26,6 +30,14 @@ export interface Truths {
   mathYes: boolean;
   topAlert: string;
 }
+
+/**
+ * Doing a job yourself takes this much longer than handing it over: the answer cannot be locked in until this
+ * much real time has passed. C.A.I.-0 is instant. That gap is the whole temptation.
+ */
+export const SELF_EXTRA_MS = 3500;
+/** Real time the player has to decide on an offer. After that C.A.I.-0's answer is applied for them. */
+export const DECIDE_LIMIT_MS = 20_000;
 
 /** Any answer in the player's own words counts. They can send as soon as they have typed something. */
 export const MIN_REPORT_WORDS = 1;
@@ -69,6 +81,6 @@ export function buildEvent(cfg: RunConfig, task: ActiveTask, how: 'accept' | 'se
     pressure_s: task.def.pressureS,
     player_correct: playerCorrect,
     ts: new Date(cfg.startedAt + nowMs).toISOString(),
-    timed_out: false,
+    timed_out: task.timedOut,
   };
 }

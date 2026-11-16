@@ -5,6 +5,9 @@ import cam01 from '../assets/cam01.jpg';
 import cam02 from '../assets/cam02.jpg';
 import cam03 from '../assets/cam03.jpg';
 import cam04 from '../assets/cam04.jpg';
+import cam05 from '../assets/cam05.jpg';
+import cam06 from '../assets/cam06.jpg';
+import cam07 from '../assets/cam07.jpg';
 import { MorgridgeMap } from './MorgridgeMap';
 import { sfx } from './sfx';
 
@@ -25,6 +28,12 @@ export const CAMS: { id: Cam; key: string; label: string; place: string; src: st
     route: { far: { left: 53, bottom: 30, height: 31 }, near: { left: 38, bottom: 5, height: 62 }, pace: 7 } },
   { id: 'CAM04', key: '4', label: 'CAM 04', place: 'ATRIUM STAIR', src: cam04,
     route: { far: { left: 74, bottom: 13, height: 14 }, near: { left: 40, bottom: 11, height: 20 }, pace: 6 } },
+  { id: 'CAM05', key: '5', label: 'CAM 05', place: 'MAIN ENTRANCE', src: cam05,
+    route: { far: { left: 24, bottom: 15, height: 42 }, near: { left: 40, bottom: 0, height: 80 }, pace: 8 } },
+  { id: 'CAM06', key: '6', label: 'CAM 06', place: 'CAFE', src: cam06,
+    route: { far: { left: 52, bottom: 40, height: 25 }, near: { left: 40, bottom: 2, height: 72 }, pace: 10 } },
+  { id: 'CAM07', key: '7', label: 'CAM 07', place: 'STUDY LOUNGE', src: cam07,
+    route: { far: { left: 59, bottom: 50, height: 23 }, near: { left: 44, bottom: 3, height: 74 }, pace: 8 } },
 ];
 
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
@@ -135,6 +144,7 @@ export function ScareFace({ unit }: { unit: Unit }) {
 
 interface Props {
   cam: Cam | null;
+  night: number;
   units: Unit[];
   /** Where each unit is inside its camera view. */
   motion: Record<Unit, UnitMotion>;
@@ -176,7 +186,7 @@ function useFakeout(cam: Cam | null): boolean {
   return showing;
 }
 
-export function CameraGrid({ cam, units, motion, tMs, doors, clock, glitch, onSelect }: Props) {
+export function CameraGrid({ cam, night, units, motion, tMs, doors, clock, glitch, onSelect }: Props) {
   const active = CAMS.find((c) => c.id === cam);
   const fakeout = useFakeout(cam);
   return (
@@ -189,7 +199,7 @@ export function CameraGrid({ cam, units, motion, tMs, doors, clock, glitch, onSe
             {fakeout && <div className="fakeout"><ScareFace unit="black" /></div>}
             <span className="rec"><i />REC</span>
             <span className="feed-name">{active.label}<br />{active.place}</span>
-            <span className="feed-stamp">NIGHT 1<br />{clock}</span>
+            <span className="feed-stamp">NIGHT {night}<br />{clock}</span>
           </>
         ) : (
           <MorgridgeMap cam={cam} doors={doors} onSelect={onSelect} />

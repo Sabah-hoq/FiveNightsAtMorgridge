@@ -216,8 +216,8 @@ kbd {
 .screen.glitch .noise { opacity: .85; }
 .screen.glitch .feed { transform: translateX(8px) skewX(2deg); }
 @keyframes grain { 0% { transform: translate(0, 0); } 25% { transform: translate(-22px, 14px); } 50% { transform: translate(18px, -26px); } 75% { transform: translate(-9px, -12px); } 100% { transform: translate(12px, 20px); } }
-.cam-tabs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
-.cam-tabs .key { font-size: 20px; padding: 8px 8px; }
+.cam-tabs { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+.cam-tabs .key { font-size: 18px; padding: 8px 6px; }
 
 .panel {
   position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 340px); gap: 16px;
@@ -306,7 +306,7 @@ kbd {
   .crt, .desk { height: auto; }
   .main { grid-template-columns: 1fr 1fr; }
   .start-grid { grid-template-columns: 1fr; }
-  .cam-tabs { grid-template-columns: repeat(3, 1fr); }
+  .cam-tabs { grid-template-columns: repeat(4, 1fr); }
   .monitor { grid-column: 1 / -1; grid-row: 1; }
   .screen { aspect-ratio: 16 / 9; min-height: 0; }
   .doorway { height: 90px; }
@@ -420,3 +420,22 @@ kbd {
 
 .memory { border-left: 2px solid var(--ai); padding-left: 12px; }
 .begin:disabled { opacity: .7; cursor: progress; }
+
+/* ---------- Task clocks: time left to decide, and the extra time doing it by hand takes ---------- */
+.timer { display: grid; gap: 4px; margin-top: 8px; max-width: 70ch; font-family: var(--display); font-size: 17px; letter-spacing: 1px; color: var(--dim); }
+.timer i { display: block; height: 6px; border: 1px solid var(--line); }
+.timer b { display: block; height: 100%; background: var(--dim); transition: width .1s linear; }
+.timer.decide.low { color: var(--rec); }
+.timer.decide.low b { background: var(--rec); }
+.timer.hand { color: var(--warn); }
+.timer.hand b { background: var(--warn); }
+.timer.hand.done { color: var(--dim); }
+.timer.hand.done b { background: var(--dim); }
+/* ---------- Saved progress ---------- */
+.save-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12px; letter-spacing: 1px; color: var(--dim); }
+.save-row input { width: 16px; height: 16px; accent-color: var(--ink); }
+.saved-note { margin-top: 6px; font-family: var(--display); font-size: 17px; letter-spacing: 1px; color: var(--ok); }
+.begin.alt { font-size: 20px; margin-top: 8px; color: var(--dim); }
+.progress-line { font-family: var(--display); font-size: 22px; letter-spacing: 1.5px; color: var(--ok); }
+.progress-line.off { color: var(--dim); }
+.mirror-actions { display: flex; flex-wrap: wrap; gap: 10px; }

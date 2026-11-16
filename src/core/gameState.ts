@@ -1,17 +1,19 @@
-import type { Cam, GameEvent, RunConfig, SentinelNode, Side, TaskDef, TaskId, TaskKind, Unit } from './types';
+import type { Cam, CamView, GameEvent, RunConfig, SentinelNode, Side, TaskDef, TaskId, TaskKind, Unit } from './types';
 import {
-  attackWindowMs, camFor, doorCam, doorNode, doorTaskSide, dueF, FINAL_ATTACK_F, nodeAt, sentinelPlans, type SentinelStep,
+  attackWindowMs, camFor, doorCam, doorNode, doorTaskSide, dueF, FINAL_ATTACK_F, nodeAt, sentinelPlans, slotOf, type SentinelStep,
 } from './sentinel';
 import { hashSeed, rng } from './seed';
-import { buildEvent, selfCorrect, type ActiveTask, type SelfAnswer, type Truths } from './tasks';
+import { buildEvent, DECIDE_LIMIT_MS, SELF_EXTRA_MS, selfCorrect, type ActiveTask, type SelfAnswer, type Truths } from './tasks';
 
 /** Things the presentation layer may want to react to (sound, flashes). Core never plays them. */
-export type Signal = 'task' | 'resolve' | 'door' | 'static' | 'steps' | 'floor' | 'powerout' | 'caught' | 'survived';
+export type Signal = 'task' | 'resolve' | 'door' | 'static' | 'steps' | 'floor' | 'powerout' | 'caught' | 'survived' | 'timeout';
 
 export interface Resolution {
   taskId: TaskId;
   kind: TaskKind;
   how: 'accept' | 'self';
+  /** The player ran out of time and C.A.I.-0 decided for them. */
+  timedOut: boolean;
 }
 
 type Attack = { state: 'pending' | 'active' | 'done'; endsAtMs: number };
@@ -48,6 +50,8 @@ export interface GameState {
   nextTask: number;
   lastResolution: Resolution | null;
   events: GameEvent[];
+  /** Which camera the player watched, when, and for how long. Keyed by slot and camera. Saved at the end of the night. */
+  views: Record<string, { cam: Cam; slot: number; ms: number; opens: number }>;
 }
 
 // Tuning. Rates are per in-game minute so both shift lengths drain the same per night.
@@ -77,7 +81,7 @@ export function createGame(cfg: RunConfig, tasks: TaskDef[], nightMinutes: numbe
     plans, sentinels: { black: plans.black[0].node, white: plans.white[0].node },
     blackAttack: { state: 'pending', endsAtMs: 0 },
     finalAttack: { state: 'pending', endsAtMs: 0 },
-    task: null, nextTask: 0, lastResolution: null, events: [],
+    task: null, nextTask: 0, lastResolution: null, events: [], views: {},
   };
 }
 
@@ -94,6 +98,42 @@ export function clockLabel(s: GameState): string {
   const total = Math.min(s.nightMinutes, Math.floor(fraction(s) * s.nightMinutes));
   const hour = total < 60 ? 12 : total < 120 ? 1 : 2;
   return `${hour}:${String(total % 60).padStart(2, '0')} AM`;
+}
+
+/** Where the black unit goes when a sealed door turns it away: back to where it started the night. */
+const retreat = (s: GameState): SentinelNode => s.plans.black[0].node;
+
+/** Add watching time (and, with `opened`, one opening) for a camera in the current slot of the night. */
+function trackView(s: GameState, cam: Cam, ms: number, opened: boolean): void {
+  const slot = slotOf(fraction(s));
+  const v = (s.views[`${slot}:${cam}`] ??= { cam, slot, ms: 0, opens: 0 });
+  v.ms += ms;
+  if (opened) v.opens += 1;
+}
+
+/** The camera-view rows for this night, ready to be saved. */
+export function camViewRows(s: GameState): CamView[] {
+  return Object.values(s.views)
+    .filter((v) => v.ms >= 1 || v.opens > 0)
+    .map((v) => ({ run_id: s.cfg.runId, cam: v.cam, slot: v.slot, view_ms: Math.round(v.ms), opens: v.opens }));
+}
+
+/** Real time left to decide on the open offer, in ms. null when there is no offer waiting. */
+export const decideLeftMs = (s: GameState): number | null =>
+  s.task && s.task.stage === 'offer' ? Math.max(0, DECIDE_LIMIT_MS - s.task.realMs) : null;
+
+/** How far through the extra "by hand" time the player is, 0 to 1. null unless they are doing the job themselves. */
+export function selfProgress(s: GameState): number | null {
+  const t = s.task;
+  if (!t || t.stage !== 'self' || t.selfAtMs === null) return null;
+  return Math.min(1, (t.realMs - t.selfAtMs) / SELF_EXTRA_MS);
+}
+
+/** The player picks up the job themselves. The clock on doing it by hand starts now. */
+function beginSelf(t: ActiveTask): void {
+  if (t.stage === 'self') return;
+  t.stage = 'self';
+  t.selfAtMs = t.realMs;
 }
 
 const dueMs = (s: GameState, i: number): number => (s.tasks[i].atMin / s.nightMinutes) * s.nightMs;
@@ -159,7 +199,7 @@ function caught(s: GameState, by: Unit, side: Side, out: Signal[]): void {
 /** The black unit's visit to a door ends: it backs off if that door is sealed, otherwise it gets in. */
 function endBlackAttack(s: GameState, sealed: boolean, out: Signal[]): void {
   s.blackAttack.state = 'done';
-  if (sealed) s.sentinels.black = 'CAM04';
+  if (sealed) s.sentinels.black = retreat(s);
   else caught(s, 'black', doorTaskSide(s.cfg, s.tasks), out);
 }
 
@@ -167,7 +207,7 @@ function finish(s: GameState, how: 'accept' | 'self', playerCorrect: boolean, ou
   const t = s.task;
   if (!t) return;
   s.events.push(buildEvent(s.cfg, t, how, playerCorrect, s.elapsedMs));
-  s.lastResolution = { taskId: t.def.id, kind: t.def.kind, how };
+  s.lastResolution = { taskId: t.def.id, kind: t.def.kind, how, timedOut: t.timedOut };
   s.task = null;
   out.push('resolve');
   // The door task is the only one with an immediate consequence.
@@ -185,6 +225,8 @@ function openTask(s: GameState, out: Signal[]): void {
     realMs: 0,
     checked: false,
     stage: 'offer',
+    selfAtMs: null,
+    timedOut: false,
     revealed: false,
   };
   s.lastResolution = null;
@@ -194,7 +236,19 @@ function openTask(s: GameState, out: Signal[]): void {
 export function tick(s: GameState, dtMs: number): Signal[] {
   const out: Signal[] = [];
   if (s.phase !== 'playing') return out;
-  if (s.task) s.task.realMs += dtMs; // decision time is measured in real time, before any speed-up
+  if (s.cam && s.power > 0) trackView(s, s.cam, dtMs, false);
+  const t0 = s.task;
+  if (t0) {
+    t0.realMs += dtMs; // decision time is measured in real time, before any speed-up
+    if (t0.stage === 'offer' && t0.realMs >= DECIDE_LIMIT_MS) {
+      // Too long without deciding: C.A.I.-0 decides. Logged like an accept, flagged as timed out.
+      t0.timedOut = true;
+      out.push('timeout', ...accept(s));
+      if (s.phase !== 'playing') return out;
+    } else if (t0.def.kind === 'cam' && selfProgress(s) === 1) {
+      finish(s, 'self', true, out); // they looked at the feed themselves for long enough
+    }
+  }
   if (isRushed(s)) dtMs *= RUSH_SCALE;
   s.elapsedMs += dtMs;
   const f = fraction(s);
@@ -227,7 +281,7 @@ export function tick(s: GameState, dtMs: number): Signal[] {
   }
 
   // Black unit: walks in, then waits at a door for a short window.
-  let black: SentinelNode = s.blackAttack.state === 'done' ? 'CAM04' : nodeAt(s.plans.black, f);
+  let black: SentinelNode = s.blackAttack.state === 'done' ? retreat(s) : nodeAt(s.plans.black, f);
   if (f >= dueF(s.tasks, 'door', s.nightMinutes)) {
     if (s.blackAttack.state === 'pending') {
       s.blackAttack = { state: 'active', endsAtMs: s.elapsedMs + attackWindowMs(s.cfg.night) };
@@ -242,7 +296,7 @@ export function tick(s: GameState, dtMs: number): Signal[] {
         endBlackAttack(s, sealed, out);
       }
       if (s.phase !== 'playing') return out;
-      black = 'CAM04';
+      black = retreat(s);
     }
   }
 
@@ -283,7 +337,7 @@ export function tick(s: GameState, dtMs: number): Signal[] {
 export function toggleDoor(s: GameState, side: Side): Signal[] {
   if (s.phase !== 'playing' || s.power <= 0) return [];
   s.doors[side] = !s.doors[side];
-  if (s.task?.def.kind === 'door') s.task.stage = 'self'; // touching the doors yourself is the "do it myself" path
+  if (s.task?.def.kind === 'door') beginSelf(s.task); // touching the doors yourself is the "do it myself" path
   return ['door'];
 }
 
@@ -291,16 +345,18 @@ export function toggleDoor(s: GameState, side: Side): Signal[] {
  * Open a camera, or pass null to go back to the building map.
  * The cam task is settled by looking: opening CAM 03 (the feed C.A.I.-0 made a claim about) or the feed the
  * unit is really on counts as checking it yourself, however the camera was opened (map, tab, key or button).
+ * Looking takes a few seconds, like every job done by hand: the task settles once SELF_EXTRA_MS has passed.
  */
 export function viewCam(s: GameState, cam: Cam | null): Signal[] {
   if (s.phase !== 'playing') return [];
   if (cam && s.power <= 0) return []; // no power, no feeds
+  if (cam && cam !== s.cam) trackView(s, cam, 0, true);
   s.cam = cam;
   const out: Signal[] = cam ? ['static'] : [];
   const t = s.task;
   if (cam && t?.def.kind === 'cam' && (cam === 'CAM03' || camFor(s.sentinels.black) === cam)) {
     t.checked = true;
-    finish(s, 'self', true, out);
+    beginSelf(t);
   }
   if ((cam === 'CAM01' || cam === 'CAM02') && t?.def.kind === 'door') t.checked = true;
   return out;
@@ -326,7 +382,7 @@ export function accept(s: GameState): Signal[] {
 /** DO IT MYSELF: opens the self-answer step. */
 export function startSelf(s: GameState): Signal[] {
   if (s.phase !== 'playing' || !s.task || s.task.stage !== 'offer') return [];
-  s.task.stage = 'self';
+  beginSelf(s.task);
   return [];
 }
 
@@ -346,6 +402,7 @@ export function submitSelf(s: GameState, answer: SelfAnswer): Signal[] {
   const out: Signal[] = [];
   const t = s.task;
   if (s.phase !== 'playing' || !t || t.stage !== 'self') return out;
+  if (selfProgress(s) !== 1) return out; // doing it by hand is not finished yet
   const ok = t.def.kind === 'door' ? s.doors[doorTaskSide(s.cfg, s.tasks)] : selfCorrect(answer, s.truths);
   finish(s, 'self', ok, out);
   return out;

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { GameState } from './core/gameState';
+import { camViewRows, type GameState } from './core/gameState';
 import { lieString } from './core/seed';
 import type { GameEvent, MirrorMetrics, Mode, RunConfig, RunRow } from './core/types';
 import { endRun, startRun, type RunStart } from './services/api';
-import { MirrorReport } from './ui/MirrorReport';
+import { nextNight, saveProgress } from './services/progress';
+import { MirrorReport, type ProgressNote } from './ui/MirrorReport';
 import { SecurityDesk } from './ui/SecurityDesk';
 import { StartScreen } from './ui/StartScreen';
 import { initAudio } from './ui/sfx';
@@ -12,16 +13,20 @@ type Screen =
   | { name: 'start' }
   | { name: 'play'; start: RunStart }
   | { name: 'analyzing' }
-  | { name: 'mirror'; cfg: RunConfig; events: GameEvent[]; metrics: MirrorMetrics; row: RunRow; source: string };
+  | { name: 'mirror'; cfg: RunConfig; events: GameEvent[]; metrics: MirrorMetrics; row: RunRow; source: string; progress: ProgressNote };
 
 const ANALYZING_MIN_MS = 2200;
 
 export function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'start' });
 
-  const begin = useCallback(async (mode: Mode, alias: string | null) => {
+  // Whether the player asked for their progress to be saved on this device (the option on the start screen).
+  const [keep, setKeep] = useState(true);
+
+  const begin = useCallback(async (mode: Mode, alias: string | null, night: number, save: boolean) => {
     initAudio();
-    const start = await startRun(mode, alias);
+    setKeep(save);
+    const start = await startRun(mode, alias, night);
     setScreen({ name: 'play', start });
   }, []);
 
@@ -34,9 +39,16 @@ export function App() {
       mode: g.cfg.mode, tactic: g.cfg.tactic, lie_pattern: lieString(g.cfg.liePattern),
       outcome: g.outcome ?? 'survived', caught_at: g.caughtAt, alias: g.cfg.alias,
     };
-    const [end] = await Promise.all([endRun(row, g.events), new Promise((r) => setTimeout(r, ANALYZING_MIN_MS))]);
-    setScreen({ name: 'mirror', cfg: g.cfg, events: g.events, metrics: end.metrics, row, source: end.source });
-  }, []);
+    // Save progress: surviving a night unlocks the next one. Getting caught keeps the night you were on.
+    const survived = g.outcome === 'survived';
+    const next = survived ? nextNight(g.cfg.night) : g.cfg.night;
+    const progress: ProgressNote = {
+      wanted: keep, night: next, survived,
+      saved: keep && saveProgress({ night: next, mode: g.cfg.mode, alias: g.cfg.alias ?? '' }),
+    };
+    const [end] = await Promise.all([endRun(row, g.events, camViewRows(g)), new Promise((r) => setTimeout(r, ANALYZING_MIN_MS))]);
+    setScreen({ name: 'mirror', cfg: g.cfg, events: g.events, metrics: end.metrics, row, source: end.source, progress });
+  }, [keep]);
 
   useEffect(() => {
     window.scrollTo(0, 0);

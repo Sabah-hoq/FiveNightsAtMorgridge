@@ -9,6 +9,9 @@ const CAM_MARKS: { id: Cam; n: string; x: number; y: number; cone: string; lx: n
   { id: 'CAM02', n: '02', x: 172, y: 232, cone: '172,232 160,190 182,190', lx: 180, ly: 236, anchor: 'start' },
   { id: 'CAM03', n: '03', x: 224, y: 168, cone: '224,168 150,146 150,176', lx: 232, ly: 171, anchor: 'start' },
   { id: 'CAM04', n: '04', x: 268, y: 44, cone: '268,44 214,52 222,78', lx: 276, ly: 47, anchor: 'start' },
+  { id: 'CAM05', n: '05', x: 292, y: 100, cone: '292,100 254,86 252,112', lx: 300, ly: 104, anchor: 'start' },
+  { id: 'CAM06', n: '06', x: 248, y: 134, cone: '248,134 206,110 200,134', lx: 256, ly: 140, anchor: 'start' },
+  { id: 'CAM07', n: '07', x: 68, y: 150, cone: '68,150 61,104 77,104', lx: 62, ly: 164, anchor: 'end' },
 ];
 
 interface Props {
@@ -19,7 +22,7 @@ interface Props {
 
 export function MorgridgeMap({ cam, doors, onSelect }: Props) {
   return (
-    <svg className="map" viewBox="34 20 372 232" role="img" aria-label="Security map of Morgridge Hall showing four cameras and the two office doors">
+    <svg className="map" viewBox="34 20 372 232" role="img" aria-label="Security map of Morgridge Hall showing seven cameras and the two office doors">
       {/* building shell */}
       <path className="map-wall" d="M60,70 L95,28 L255,28 L300,92 L228,148 L228,176 L190,196 L190,240 L74,240 L74,160 L60,140 Z" />
       {/* lecture hall */}
@@ -33,6 +36,11 @@ export function MorgridgeMap({ cam, doors, onSelect }: Props) {
       {/* commons */}
       <path className="map-dash" d="M182,104 Q214,92 236,112 Q226,138 196,136 Q176,124 182,104 Z" />
       <text className="map-label" x="208" y="120" textAnchor="middle">COMMONS</text>
+      {/* main entrance, cafe (in the commons) and study lounge */}
+      <path className="map-detail" d="M296,86 l8,10 M291,90 l8,10" />
+      <text className="map-label" x="300" y="114" textAnchor="start">ENTRANCE</text>
+      <text className="map-label" x="208" y="129" textAnchor="middle">CAFE</text>
+      <text className="map-label" x="68" y="96" textAnchor="middle" transform="rotate(-90 68 96)">LOUNGE</text>
       {/* hello world hall */}
       <path className="map-room" d="M92,144 H214 V178 H92 Z" />
       <text className="map-label" x="153" y="165" textAnchor="middle">HELLO WORLD HALL</text>
