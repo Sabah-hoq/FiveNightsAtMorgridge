@@ -7,7 +7,8 @@ import { buildEvent, DECIDE_LIMIT_MS, SELF_EXTRA_MS, selfCorrect, type ActiveTas
 
 /** Things the presentation layer may want to react to (sound, flashes). Core never plays them. */
 export type Signal =
-  | 'task' | 'resolve' | 'door' | 'static' | 'steps' | 'floor' | 'powerout' | 'caught' | 'survived' | 'timeout' | 'monitor' | 'inside';
+  | 'task' | 'resolve' | 'door' | 'static' | 'camswitch' | 'steps' | 'floor' | 'powerout' | 'caught' | 'survived' | 'timeout' | 'monitor'
+  | 'inside';
 
 export interface Resolution {
   taskId: TaskId;
@@ -448,7 +449,7 @@ export function viewCam(s: GameState, cam: Cam | null): Signal[] {
   if (!s.monitorUp) out.push('monitor'); // choosing a feed raises the monitor
   s.monitorUp = true;
   s.cam = cam;
-  if (cam) out.push('static');
+  if (cam) out.push('camswitch');
   const t = s.task;
   if (cam && t?.def.kind === 'cam' && (cam === 'CAM03' || camFor(s.sentinels.black) === cam)) {
     t.checked = true;

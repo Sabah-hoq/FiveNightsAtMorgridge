@@ -12,7 +12,7 @@ import { logEvent, type RunStart } from '../services/api';
 import { CameraGrid, CAMS, ScareFace } from './CameraGrid';
 import { CaiFace, Office, type CaiMood } from './Office';
 import { GAME_TITLE } from './CertLine';
-import { setDread, setHeartbeat, sfx, toggleMute } from './sfx';
+import { setDread, setHeartbeat, sfx, stopClips, toggleMute } from './sfx';
 import { backendConfigured } from '../services/api';
 
 const TICK_MS = 50;
@@ -46,9 +46,13 @@ const GLITCH_FROM = 0.55;
 const GLITCH_MS: Record<Glitch['kind'], number> = { title: 800, clock: 900, tear: 300, door: 500, whisper: 3600 };
 
 /** Things C.A.I.-0 says under its breath. None of them is a claim about where anything is. */
+/** The first thing C.A.I.-0 whispers each night, with its own sound. */
+export const I_SEE_YOU = 'I see you.';
+
 function whispers(alias: string | null, learnedFrom: number | null): string[] {
   const you = alias ? `, ${alias}` : '';
   const lines = [
+    I_SEE_YOU,
     `I am watching you${you}.`,
     'You hesitated. I noticed.',
     'Everything you decide tonight is being written down.',
@@ -75,7 +79,8 @@ function useGlitches(g: GameState, paused: boolean): Glitch | null {
       next = setTimeout(() => {
         const quiet = g.phase === 'playing' && !g.task && g.power > 0 && !pausedRef.current && !g.inside;
         if (quiet && fraction(g) >= GLITCH_FROM) {
-          const roll = Math.random();
+          // The first slip of the night is always C.A.I.-0 whispering "I see you."
+          const roll = said === 0 ? 0 : Math.random();
           const pick: Glitch =
             roll < 0.34 ? { kind: 'whisper', text: lines[said++ % lines.length] }
             : roll < 0.52 ? { kind: 'title' }
@@ -83,7 +88,8 @@ function useGlitches(g: GameState, paused: boolean): Glitch | null {
             : roll < 0.84 ? { kind: 'door', side: Math.random() < 0.5 ? 'L' : 'R' }
             : { kind: 'tear' };
           setGlitch(pick);
-          sfx.glitch();
+          if (pick.kind === 'whisper' && pick.text === I_SEE_YOU) sfx.seeYou();
+          else sfx.glitch();
           clear = setTimeout(() => setGlitch(null), GLITCH_MS[pick.kind]);
         }
         plan();
@@ -123,8 +129,9 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
 
   const handle = (signals: Signal[]) => {
     for (const s of signals) {
-      sfx[s]?.();
-      if (s === 'static') setGlitchUntil(performance.now() + 420);
+      if (s === 'caught') sfx.caught(g.caughtBy ?? 'black');
+      else sfx[s]?.();
+      if (s === 'static' || s === 'camswitch') setGlitchUntil(performance.now() + 420);
       if (s === 'resolve') logEvent(g.events[g.events.length - 1]);
       if ((s === 'caught' || s === 'survived') && !ended.current) {
         ended.current = true;
@@ -153,8 +160,9 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
       setHeartbeat(g.phase === 'playing' && (atADoor(g) || g.power <= 0 || !!g.inside));
       force();
     }, TICK_MS);
+    stopClips(); // nothing from the last night carries over
     return () => {
-      clearInterval(id);
+      clearInterval(id); // recordings keep playing: the 2:00 AM sound and the scream run past this screen
       setHeartbeat(false);
       setDread(0.2);
     };

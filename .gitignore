@@ -4,3 +4,7 @@ dist/
 .env
 .env.local
 __pycache__/
+
+# Sounds you add yourself, kept off GitHub (see src/assets/local/README.md)
+src/assets/local/*
+!src/assets/local/README.md

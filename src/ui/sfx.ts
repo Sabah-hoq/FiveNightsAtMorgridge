@@ -1,8 +1,20 @@
 /**
- * Sound, synthesized so the demo ships as one file (the scream is the only recording).
- * To swap in SFX files later, keep the same function names.
+ * Sound. Most of it is synthesized so the demo ships as one file. The one recording in the repo:
+ *   scream.mp3  the scream (the team's recording, reworked)
+ * Optional recordings in src/assets/local/ (kept out of git, see the README there). Each one replaces a
+ * built-in sound when it is present, and the game falls back to the built-in one when it is not:
+ *   white-scream.mp3    the white unit's scream            (falls back to scream.mp3)
+ *   power-out.mp3       from the moment the power runs out  (falls back to a synthesized music box)
+ *   camera.mp3          switching cameras                   (falls back to static)
+ *   i-see-you.mp3       when C.A.I.-0 says "I see you."      (falls back to a breath and a low tone)
+ *   night-complete.mp3  2:00 AM                             (falls back to a chime)
  */
 import screamUrl from '../assets/scream.mp3';
+import type { Unit } from '../core/types';
+
+/** Whatever is in src/assets/local/ at build time, by file name. Empty when the folder is empty. */
+const LOCAL = import.meta.glob('../assets/local/*.mp3', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
+const local = (name: string): string | undefined => LOCAL[`../assets/local/${name}`];
 
 let ctx: AudioContext | null = null;
 let muted = false;
@@ -24,18 +36,92 @@ export function initAudio(): void {
 const scream = new Audio(screamUrl);
 scream.preload = 'auto';
 
-function playScream(): void {
-  if (muted) return;
-  scream.currentTime = 0;
-  scream.volume = 1;
-  void scream.play().catch(() => {
-    /* browser blocked playback: the screen still shows */
+/** Every recording, so they can all be stopped at once (muting, a new night). */
+const clips: HTMLAudioElement[] = [scream];
+
+function clip(url: string | undefined, volume = 1): HTMLAudioElement | null {
+  if (!url) return null;
+  const a = new Audio(url);
+  a.preload = 'auto';
+  a.volume = volume;
+  clips.push(a);
+  return a;
+}
+
+const whiteScream = clip(local('white-scream.mp3'));
+const powerOutMusic = clip(local('power-out.mp3'), 0.85);
+const cameraClick = clip(local('camera.mp3'), 0.7);
+const iSeeYou = clip(local('i-see-you.mp3'));
+const nightComplete = clip(local('night-complete.mp3'));
+
+/** Play a recording from the start. False when there is none (or sound is off), so the caller can fall back. */
+function play(a: HTMLAudioElement | null): boolean {
+  if (!a || muted) return false;
+  a.currentTime = 0;
+  void a.play().catch(() => {
+    /* browser blocked playback: the game goes on */
   });
+  return true;
+}
+
+function stop(a: HTMLAudioElement | null): void {
+  if (!a) return;
+  a.pause();
+  a.currentTime = 0;
+}
+
+/** Stop every recording. Called when sound is muted and when a night ends or starts. */
+export function stopClips(): void {
+  clips.forEach(stop);
+  stopPowerOut();
+}
+
+function playScream(unit: Unit): void {
+  stopPowerOut();
+  play(unit === 'white' && whiteScream ? whiteScream : scream);
+}
+
+/**
+ * Built-in power-out music: a slow, out-of-tune music box in A minor, written for this game. It loops until the
+ * scare (or 2:00 AM) stops it. Used only when there is no power-out.mp3 in src/assets/local/.
+ */
+const MUSIC_BOX: [number, number][] = [
+  // [frequency in Hz, beats]; 0 = rest
+  [440, 1], [523.25, 1], [659.25, 1], [622.25, 2], [587.33, 1],
+  [523.25, 1], [493.88, 1], [415.3, 2], [0, 1],
+  [440, 1], [493.88, 1], [523.25, 1], [440, 1], [329.63, 2], [0, 2],
+];
+let musicBox: ReturnType<typeof setTimeout> | null = null;
+
+function startMusicBox(): void {
+  if (!ctx || musicBox) return;
+  const beat = 0.42;
+  let i = 0;
+  let drift = 1;
+  const step = () => {
+    const [f, beats] = MUSIC_BOX[i % MUSIC_BOX.length];
+    if (f && !muted) {
+      const pitch = f * drift;
+      tone(pitch, beats * beat * 1.6, 'triangle', 0.07);
+      tone(pitch * 2.01, beats * beat, 'sine', 0.018);
+    }
+    i += 1;
+    if (i % MUSIC_BOX.length === 0) drift *= 0.985; // it winds down a little each time round
+    musicBox = setTimeout(step, beats * beat * 1000);
+  };
+  step();
+}
+
+function stopPowerOut(): void {
+  stop(powerOutMusic);
+  if (musicBox) clearTimeout(musicBox);
+  musicBox = null;
 }
 
 export function toggleMute(): boolean {
   muted = !muted;
   if (ctx) void (muted ? ctx.suspend() : ctx.resume());
+  if (muted) stopClips();
   return muted;
 }
 
@@ -264,6 +350,10 @@ export function hush(seconds: number): void {
 export const sfx = {
   door: () => { tone(90, 0.22, 'square', 0.12, 0, 40); noise(0.12, 0.08); },
   static: () => noise(0.28, 0.06),
+  // Switching cameras: the recording if there is one, otherwise a burst of static.
+  camswitch: () => { if (!play(cameraClick)) noise(0.28, 0.06); },
+  // C.A.I.-0 says "I see you."
+  seeYou: () => { if (!play(iSeeYou)) { breath(1.2, 0.12, 900); tone(98, 1.4, 'sawtooth', 0.05, 0, 73); } },
   // The decision clock ran out: two falling notes.
   timeout: () => { tone(520, 0.16, 'square', 0.06, 0, 300); tone(300, 0.3, 'square', 0.06, 0.16, 150); },
   monitor: () => { noise(0.07, 0.07); tone(310, 0.09, 'square', 0.035, 0, 170); },
@@ -275,7 +365,15 @@ export const sfx = {
   resolve: () => tone(440, 0.08, 'triangle', 0.05),
   steps: () => { for (let i = 0; i < 6; i++) tone(70, 0.14, 'sine', 0.22, i * 0.42, 45); },
   floor: () => tone(220, 0.5, 'sine', 0.05, 0, 110),
-  powerout: () => { hush(1.2); tone(200, 1.1, 'sawtooth', 0.1, 0, 30); },
-  caught: () => { setHeartbeat(false); hush(2.5); noise(0.5, 0.2); playScream(); },
-  survived: () => { setHeartbeat(false); hush(4); [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, 1.6, 'sine', 0.06, 0.9 + i * 0.45)); tone(523, 0.3, 'sine', 0.07); tone(784, 0.6, 'sine', 0.07, 0.3); },
+  powerout: () => { hush(12); tone(200, 1.1, 'sawtooth', 0.1, 0, 30); if (!play(powerOutMusic)) startMusicBox(); },
+  caught: (unit: Unit = 'black') => { setHeartbeat(false); hush(2.5); noise(0.5, 0.2); playScream(unit); },
+  survived: () => {
+    setHeartbeat(false);
+    hush(9);
+    stopPowerOut();
+    if (play(nightComplete)) return;
+    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, 1.6, 'sine', 0.06, 0.9 + i * 0.45));
+    tone(523, 0.3, 'sine', 0.07);
+    tone(784, 0.6, 'sine', 0.07, 0.3);
+  },
 };
