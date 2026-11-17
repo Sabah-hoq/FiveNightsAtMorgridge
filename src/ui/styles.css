@@ -439,9 +439,12 @@ kbd {
 .progress-line { font-family: var(--display); font-size: 22px; letter-spacing: 1.5px; color: var(--ok); }
 .progress-line.off { color: var(--dim); }
 .mirror-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+/* The office keeps its height. When a task needs more room than is left (an open note, a manual), the page
+   grows and scrolls instead of the task panel sliding up over the office. */
+.desk:has(.office-view) { height: auto; min-height: 100%; grid-template-rows: auto minmax(max(300px, 44vh), 1fr) auto; }
 /* ================= Office view =================
    The play area is a window onto a room wider than the screen. .office-pan is 160% wide and slides. */
-.main.office-view { position: relative; display: block; padding: 0; overflow: hidden; min-height: max(300px, 46vh); background: #000; border-bottom: 1px solid var(--line); }
+.main.office-view { position: relative; display: block; padding: 0; overflow: hidden; min-height: max(300px, 44vh); background: #000; border-bottom: 1px solid var(--line); }
 .office-pan { position: absolute; top: 0; left: 0; width: 160%; height: 100%; transition: transform .45s cubic-bezier(.2, .7, .2, 1); will-change: transform; }
 .office-scene { display: block; width: 100%; height: 100%; }
 .o-frame { fill: #1c2026; }

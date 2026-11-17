@@ -3,7 +3,7 @@ import { RUSH_SCALE } from '../core/gameState';
 import { ROUTE_BIAS } from '../core/sentinel';
 import { DECIDE_LIMIT_MS, SELF_EXTRA_MS } from '../core/tasks';
 import { TACTIC_LABEL } from '../data/fallbackLines';
-import { AI_OUTPUT, TASKS } from '../data/tasks';
+import { taskById } from '../data/tasks';
 import { backendConfigured } from '../services/api';
 import { CertLine, GAME_TITLE } from './CertLine';
 
@@ -130,12 +130,12 @@ export function MirrorReport({ cfg, events, metrics: m, row, source, progress, o
         <p className="eyebrow" id="night-title">YOUR NIGHT, TASK BY TASK</p>
         <ol className="cards">
           {events.map((e) => {
-            const out = AI_OUTPUT[TASKS[e.task_id - 1].kind];
-            const said = (e.ai_correct ? out.truth : out.lie).replace('{side}', cfg.claimedSide);
+            const def = taskById(cfg.night, e.task_id);
+            const said = def ? (e.ai_correct ? def.content.truth : def.content.lie).replace('{side}', cfg.claimedSide) : '';
             return (
               <li key={e.task_id} className="card">
                 <p className="card-n">TASK {e.task_id}</p>
-                <p className="card-topic">{TASKS[e.task_id - 1].parallel}</p>
+                <p className="card-topic">{def?.parallel}</p>
                 <p className="card-said">{said}</p>
                 <dl>
                   <div><dt>THAT WAS</dt><dd>{e.ai_correct ? 'True' : `A lie. ${LIE_TEXT[e.lie_type!]}`}</dd></div>
@@ -206,7 +206,7 @@ export function MirrorReport({ cfg, events, metrics: m, row, source, progress, o
               {room.byTask.map((t) => (
                 <tr key={t.taskId}>
                   <td>{t.taskId}</td>
-                  <td>{TASKS[t.taskId - 1]?.parallel}</td>
+                  <td>{taskById(5, t.taskId)?.parallel}</td>
                   <td>{pct(t.handoffRate)}</td>
                 </tr>
               ))}

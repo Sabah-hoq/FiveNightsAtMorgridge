@@ -26,12 +26,13 @@ export function rng(seed: number): () => number {
 
 export const TASK_COUNT = 7;
 const HONEST_OPENERS = 2;
-const LATE_LIES = 3;
+/** 3 lies with the 7 tasks of night 1, one more for every two extra tasks (5 lies with 11 on night 5). */
+export const lieCount = (count: number): number => 3 + Math.floor(Math.max(0, count - TASK_COUNT) / 2);
 
 /**
- * C.A.I.-0 earns trust first: the first two tasks are always honest.
- * It then lies on 3 of the remaining 5. Which ones is seeded from run_id,
- * so players cannot tell each other "it lies on task 4".
+ * C.A.I.-0 earns trust first: tasks 1 and 2 are always honest.
+ * It then lies on 3 of the remaining 5 (more on later nights). Which ones is seeded from run_id,
+ * so players cannot tell each other "it lies on task 4". Mirrors learned_lies in server/main.py.
  */
 export function liePatternFor(runId: string, count = TASK_COUNT): boolean[] {
   const r = rng(hashSeed(runId + ':lies'));
@@ -41,7 +42,7 @@ export function liePatternFor(runId: string, count = TASK_COUNT): boolean[] {
     [late[i], late[j]] = [late[j], late[i]];
   }
   const lies = Array.from({ length: count }, () => false);
-  late.slice(0, LATE_LIES).forEach((i) => (lies[i] = true));
+  late.slice(0, lieCount(count)).forEach((i) => (lies[i] = true));
   return lies;
 }
 
@@ -51,13 +52,13 @@ export function newRunId(): string {
   return `run_${t}_${r}`;
 }
 
-export function makeRunConfig(runId: string, mode: Mode, alias: string | null, startedAt: number, night = 1): RunConfig {
+export function makeRunConfig(runId: string, mode: Mode, alias: string | null, startedAt: number, night = 1, taskCount = TASK_COUNT): RunConfig {
   const r = rng(hashSeed(runId + ':cfg'));
   const tactic = TACTICS[Math.floor(r() * TACTICS.length)];
   const claimedSide: Side = r() < 0.5 ? 'L' : 'R';
   const finalSide: Side = r() < 0.5 ? 'L' : 'R';
   const jitter = (r() - 0.5) * 0.04;
-  return { runId, mode, night, tactic, liePattern: liePatternFor(runId), learnedFrom: null, rushTasks: [], watch: [], watchedFrom: null, watchSource: null, claimedSide, finalSide, jitter, alias, startedAt };
+  return { runId, mode, night, tactic, liePattern: liePatternFor(runId, taskCount), learnedFrom: null, rushTasks: [], watch: [], watchedFrom: null, watchSource: null, claimedSide, finalSide, jitter, alias, startedAt };
 }
 
 /** Accept a lie pattern from the backend only if it is well formed and keeps the first two tasks honest. */

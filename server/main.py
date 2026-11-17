@@ -40,6 +40,13 @@ GROUP BY task_id
 """
 HONEST_OPENERS = 2   # tasks 1 and 2 always tell the truth
 LATE_LIES = 3        # lies per night, placed among the remaining tasks
+NIGHT1_TASKS = 7
+
+
+def lie_count(task_count: int) -> int:
+    """3 lies with night 1's 7 tasks, one more per two extra tasks. Mirrors lieCount in src/core/seed.ts."""
+    return LATE_LIES + max(0, task_count - NIGHT1_TASKS) // 2
+
 MIN_RUNS_TO_LEARN = 3
 RUSH_TASKS = 2       # the night clock runs faster on this many tasks: the ones players are slowest to decide on
 MEMORY_TTL_S = 600
@@ -74,7 +81,7 @@ def learned_lies(rows: list[dict], run_id: str, task_count: int) -> dict | None:
     late = list(range(HONEST_OPENERS + 1, task_count + 1))
     # Most handed-over first. A little seeded noise breaks ties and keeps runs from being identical.
     late.sort(key=lambda t: by_task.get(t, {}).get("handoff_rate", 0.0) + rng.uniform(-0.04, 0.04), reverse=True)
-    lies = sorted(late[:LATE_LIES])
+    lies = sorted(late[:lie_count(task_count)])
     return {
         "lie_pattern": "".join("1" if t in lies else "0" for t in range(1, task_count + 1)),
         "learned_from": runs,

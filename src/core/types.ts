@@ -15,7 +15,8 @@ export type SentinelNode = 'CAM03' | 'CAM04' | 'CAM05' | 'CAM06' | 'CAM07' | 'DO
 export type WatchSlot = Partial<Record<Cam, number>>;
 /** The black unit walks all night. The white unit joins on floor 2. */
 export type Unit = 'black' | 'white';
-export type TaskId = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+/** 1 to 7 every night; 8 to 11 join on nights 2 to 5. */
+export type TaskId = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
 /** What a task is about. Core and UI switch on this, not on the task number. */
 export type TaskKind = 'note' | 'math' | 'code' | 'cam' | 'rank' | 'radio' | 'door';
 
@@ -35,6 +36,29 @@ export interface TaskDef {
   selfLabel: string;
   checkLabel: string;
   parallel: string;
+  /** What this task shows and what C.A.I.-0 says about it. Different tasks of the same kind carry their own. */
+  content: TaskContent;
+  /** The right answer when the player does it themselves, where that is not the night-wide default. */
+  answer?: { mathYes?: boolean; topAlert?: string };
+}
+
+export interface TaskContent {
+  /** C.A.I.-0's answer when it is honest, and when it lies. `{side}` is filled in on the door task. */
+  truth: string;
+  lie: string;
+  /** note: the lines on the sticky note. */
+  noteLines?: string[];
+  /** code: the code flashing on the panel, and the manual's entries. */
+  code?: string;
+  manual?: [string, string][];
+  /** rank: the alerts to choose between. */
+  alerts?: { id: string; text: string }[];
+  /** math: the readout on the panel, as [label, value] pairs, and its heading. */
+  gauges?: [string, number][];
+  gaugeTitle?: string;
+  /** math: the two answer buttons when doing it yourself. */
+  yesLabel?: string;
+  noLabel?: string;
 }
 
 export interface RunConfig {

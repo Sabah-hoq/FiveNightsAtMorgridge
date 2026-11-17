@@ -17,14 +17,17 @@ export function initAudio(): void {
   }
 }
 
-/** The scream on the "IT GOT IN" screen is a real recording, not synthesized. */
+/**
+ * The scream on the "IT GOT IN" screen: the team's original recording, trimmed so it starts the instant the
+ * face appears, layered with a pitched-down growl, a pitched-up shriek and a burst of static, then compressed.
+ */
 const scream = new Audio(screamUrl);
 scream.preload = 'auto';
 
 function playScream(): void {
   if (muted) return;
   scream.currentTime = 0;
-  scream.volume = 0.9;
+  scream.volume = 1;
   void scream.play().catch(() => {
     /* browser blocked playback: the screen still shows */
   });

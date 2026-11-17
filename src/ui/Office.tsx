@@ -16,6 +16,8 @@ interface OfficeProps {
   clock: string;
   /** The task on the desk right now, so the room can show it (alarm panel, radio, sticky note). */
   kind: TaskKind | null;
+  /** The alarm code flashing on the wall panel, while a code task is open. */
+  code: string | null;
   /** A wall button briefly shows the wrong label (late-night interface glitch). */
   wrongLabel: Side | null;
   onDoor: (side: Side) => void;
@@ -51,7 +53,7 @@ function Doorway({ side, sealed, eyes }: { side: Side; sealed: boolean; eyes: bo
   );
 }
 
-export function Office({ look, doors, eyes, dark, clock, kind, wrongLabel, onDoor, onMonitor }: OfficeProps) {
+export function Office({ look, doors, eyes, dark, clock, kind, code, wrongLabel, onDoor, onMonitor }: OfficeProps) {
   const shift = ((Math.max(-1, Math.min(1, look)) + 1) / 2) * SLIDE;
   const doorButton = (side: Side): ReactNode => (
     <button id={`door-${side}`} className={`wall-btn ${side} ${doors[side] ? 'on' : ''}`} disabled={dark} onClick={() => onDoor(side)}>
@@ -109,7 +111,7 @@ export function Office({ look, doors, eyes, dark, clock, kind, wrongLabel, onDoo
         <rect className="o-box" x="1094" y="96" width="112" height="40" rx="3" />
         <text className="o-clock" x="1150" y="124" textAnchor="middle">{clock}</text>
         <rect className="o-box" x="408" y="100" width="92" height="52" rx="3" />
-        <text className={`o-alarm ${kind === 'code' ? 'live' : ''}`} x="454" y="134" textAnchor="middle">{kind === 'code' ? 'E-14' : '----'}</text>
+        <text className={`o-alarm ${kind === 'code' ? 'live' : ''}`} x="454" y="134" textAnchor="middle">{kind === 'code' && code ? code : '----'}</text>
         <text className="o-sign" x="454" y="92" textAnchor="middle">ALARM</text>
 
         <Doorway side="L" sealed={doors.L} eyes={eyes.L} />

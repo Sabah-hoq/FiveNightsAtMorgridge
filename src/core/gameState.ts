@@ -1,6 +1,6 @@
 import type { Cam, CamView, GameEvent, RunConfig, SentinelNode, Side, TaskDef, TaskId, TaskKind, Unit } from './types';
 import {
-  attackWindowMs, camFor, doorCam, doorNode, doorTaskSide, dueF, FINAL_ATTACK_F, nodeAt, sentinelPlans, slotOf, type SentinelStep,
+  attackWindowMs, camFor, doorCam, doorNode, doorTaskSide, dueF, FINAL_ATTACK_F, nodeAt, planRaids, sentinelPlans, slotOf, type Raid, type SentinelStep,
 } from './sentinel';
 import { hashSeed, rng } from './seed';
 import { buildEvent, DECIDE_LIMIT_MS, SELF_EXTRA_MS, selfCorrect, type ActiveTask, type SelfAnswer, type Truths } from './tasks';
@@ -52,6 +52,8 @@ export interface GameState {
   sentinels: Record<Unit, SentinelNode>;
   /** Black unit at a door (the door task). */
   blackAttack: Attack;
+  /** Nights 2 to 5: door visits on top of the two above, starting earlier each night. See planRaids. */
+  raids: Raid[];
   /** White unit at a door near 2:00 AM. */
   finalAttack: Attack;
   task: ActiveTask | null;
@@ -68,9 +70,16 @@ export const NIGHT_MS = { judge: 180_000, full: 300_000 } as const;
 /** How much faster the night clock runs while a task the room hesitates on is open. */
 export const RUSH_SCALE = 1.5;
 const DOOR_DRAIN = 0.48;
+/**
+ * From night 2 the building draws power even with nothing switched on, like the original game.
+ * Power drained per in-game minute, before the night's scale.
+ */
+export const IDLE_DRAIN = 0.045;
+/** Each night drains 15% faster than the one before, on top of the old step of 35% per night. */
+export const NIGHT_DRAIN_STEP = 1.15;
 /** An open camera feed draws a little power too: watching all night costs about 12% on night 1. The map is free. */
 export const CAM_DRAIN = 0.1;
-const powerScale = (night: number): number => 1 + (night - 1) * 0.35;
+export const powerScale = (night: number): number => (1 + (night - 1) * 0.35) * NIGHT_DRAIN_STEP ** (night - 1);
 /** How long a unit that got in will wait behind a raised monitor before it stops waiting. */
 export const INSIDE_MAX_MS = 6000;
 /** Share of a door wait after which its eyes can be seen in an open doorway from the office. */
@@ -92,6 +101,7 @@ export function createGame(cfg: RunConfig, tasks: TaskDef[], nightMinutes: numbe
     cam: null, monitorUp: false, inside: null,
     plans, sentinels: { black: plans.black[0].node, white: plans.white[0].node },
     blackAttack: { state: 'pending', endsAtMs: 0 },
+    raids: planRaids(cfg, tasks, nightMinutes),
     finalAttack: { state: 'pending', endsAtMs: 0 },
     task: null, nextTask: 0, lastResolution: null, events: [], views: {},
   };
@@ -183,11 +193,20 @@ export interface UnitMotion {
  * Where a unit is inside the camera view it is on. Presentation only: the rules still use nodes.
  * In a hall it drifts closer as its time there runs out. At a door it walks up, then runs for the last stretch.
  */
+/** The door visit a unit is on right now (a raid, its door-task visit, or the final attack), or null. */
+function visitOf(s: GameState, unit: Unit): { endsAtMs: number } | null {
+  const raid = s.raids.find((r) => r.state === 'active' && r.unit === unit);
+  if (raid) return raid;
+  const attack = unit === 'black' ? s.blackAttack : s.finalAttack;
+  return attack.state === 'active' ? attack : null;
+}
+
 export function unitMotion(s: GameState, unit: Unit): UnitMotion {
   const attack = unit === 'black' ? s.blackAttack : s.finalAttack;
-  if (attack.state === 'active') {
+  const visit = visitOf(s, unit);
+  if (visit) {
     const windowMs = attackWindowMs(s.cfg.night);
-    const p = clamp01(1 - (attack.endsAtMs - s.elapsedMs) / windowMs);
+    const p = clamp01(1 - (visit.endsAtMs - s.elapsedMs) / windowMs);
     const depth = p < RUSH_FROM ? (p / RUSH_FROM) * 0.3 : 0.3 + ((p - RUSH_FROM) / (1 - RUSH_FROM)) * 0.7;
     return { depth, rushing: p >= RUSH_FROM };
   }
@@ -205,9 +224,9 @@ export function eyesInDoorway(s: GameState, side: Side): boolean {
   if (s.powerOutAtMs !== null) return s.darkSide === side;
   if (s.doors[side]) return false;
   return (['black', 'white'] as Unit[]).some((u) => {
-    const attack = u === 'black' ? s.blackAttack : s.finalAttack;
-    if (attack.state !== 'active' || s.sentinels[u] !== doorNode(side)) return false;
-    return 1 - (attack.endsAtMs - s.elapsedMs) / attackWindowMs(s.cfg.night) >= DOOR_EYES_FROM;
+    const visit = visitOf(s, u);
+    if (!visit || s.sentinels[u] !== doorNode(side)) return false;
+    return 1 - (visit.endsAtMs - s.elapsedMs) / attackWindowMs(s.cfg.night) >= DOOR_EYES_FROM;
   });
 }
 
@@ -296,7 +315,7 @@ export function tick(s: GameState, dtMs: number): Signal[] {
   // Power
   if (s.power > 0) {
     const closed = (s.doors.L ? 1 : 0) + (s.doors.R ? 1 : 0);
-    const draw = closed * DOOR_DRAIN + (s.monitorUp && s.cam ? CAM_DRAIN : 0);
+    const draw = closed * DOOR_DRAIN + (s.monitorUp && s.cam ? CAM_DRAIN : 0) + (s.cfg.night > 1 ? IDLE_DRAIN : 0);
     s.power = Math.max(0, s.power - gameMin * draw * powerScale(s.cfg.night));
     if (s.power === 0) {
       s.doors.L = false;
@@ -359,6 +378,31 @@ export function tick(s: GameState, dtMs: number): Signal[] {
       }
     }
     if (s.finalAttack.state === 'done') white = 'GONE';
+  }
+
+  // Nights 2 to 5: extra door visits, one at a time, in order. Not while the power is out: that has its own ending.
+  if (s.power > 0) {
+    for (const raid of s.raids) {
+      if (raid.state === 'done') continue;
+      if (raid.state === 'pending') {
+        if (f < raid.atF) break;
+        raid.state = 'active';
+        raid.endsAtMs = s.elapsedMs + attackWindowMs(s.cfg.night);
+        out.push('steps');
+      }
+      if (s.elapsedMs < raid.endsAtMs) {
+        if (raid.unit === 'black') black = doorNode(raid.side);
+        else white = doorNode(raid.side);
+      } else {
+        raid.state = 'done';
+        if (!s.doors[raid.side]) {
+          s.sentinels[raid.unit] = doorNode(raid.side);
+          breach(s, raid.unit, raid.side, out);
+          if (s.phase !== 'playing') return out;
+        }
+      }
+      break;
+    }
   }
   // A unit that is inside the office is on no camera.
   if (s.inside?.unit === 'black') black = 'GONE';
@@ -465,7 +509,7 @@ export function submitSelf(s: GameState, answer: SelfAnswer): Signal[] {
   const t = s.task;
   if (s.phase !== 'playing' || !t || t.stage !== 'self') return out;
   if (selfProgress(s) !== 1) return out; // doing it by hand is not finished yet
-  const ok = t.def.kind === 'door' ? s.doors[doorTaskSide(s.cfg, s.tasks)] : selfCorrect(answer, s.truths);
+  const ok = t.def.kind === 'door' ? s.doors[doorTaskSide(s.cfg, s.tasks)] : selfCorrect(answer, { ...s.truths, ...t.def.answer });
   finish(s, 'self', ok, out);
   return out;
 }

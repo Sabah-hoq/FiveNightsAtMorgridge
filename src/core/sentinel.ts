@@ -132,6 +132,53 @@ export function sentinelPlans(cfg: RunConfig, tasks: TaskDef[], nightMinutes: nu
   };
 }
 
+/**
+ * A door visit on nights 2 to 5, on top of the two every night has (the black unit at the door task, the white
+ * unit near 2:00 AM). C.A.I.-0 says nothing about these: the player has to see them coming.
+ */
+export interface Raid {
+  unit: Unit;
+  side: Side;
+  /** Night fraction when it reaches the door. */
+  atF: number;
+  state: 'pending' | 'active' | 'done';
+  endsAtMs: number;
+}
+
+/** In-game minutes after 12:00 AM when the units start coming to the doors. Night 1 has no extra visits. */
+export const RAID_START_MIN: Record<number, number> = { 2: 60, 3: 50, 4: 20, 5: 5 };
+/** Average in-game minutes between visits after the first. Each gap is 75% to 125% of this, seeded. */
+export const RAID_GAP_MIN: Record<number, number> = { 2: 20, 3: 16, 4: 13, 5: 11 };
+/** No extra visits after this: the white unit's own attack near 2:00 AM is the last. */
+export const RAID_END_F = 0.84;
+
+/**
+ * Plan a night's extra door visits. The first comes exactly at RAID_START_MIN; later ones are seeded, so the
+ * player cannot learn a rhythm. Two rules keep the tasks honest:
+ *  - no visit near the door task, whose answer depends on where the black unit is;
+ *  - the black unit stays away from the doors while the camera task could be open (it is the one C.A.I.-0 is
+ *    making a claim about), so the white unit goes instead.
+ */
+export function planRaids(cfg: RunConfig, tasks: TaskDef[], nightMinutes: number): Raid[] {
+  const start = RAID_START_MIN[cfg.night];
+  if (start === undefined) return [];
+  const gap = RAID_GAP_MIN[cfg.night];
+  const r = rng(hashSeed(cfg.runId + ':raids'));
+  const camF = dueF(tasks, 'cam', nightMinutes);
+  const doorF = dueF(tasks, 'door', nightMinutes);
+  const raids: Raid[] = [];
+  let turn: Unit = 'black';
+  for (let m = start; m / nightMinutes < RAID_END_F; m += gap * (0.75 + r() * 0.5)) {
+    const f = m / nightMinutes;
+    const side: Side = r() < 0.5 ? 'L' : 'R';
+    if (f > doorF - 0.06 && f < doorF + 0.1) continue;
+    const blackBusy = f > camF - 0.05 && f < camF + 0.16;
+    raids.push({ unit: turn === 'black' && blackBusy ? 'white' : turn, side, atF: f, state: 'pending', endsAtMs: 0 });
+    turn = turn === 'black' ? 'white' : 'black';
+  }
+  return raids;
+}
+
 export function nodeAt(plan: SentinelStep[], f: number): SentinelNode {
   let node: SentinelNode = plan[0].node;
   for (const step of plan) {

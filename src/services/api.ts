@@ -1,10 +1,10 @@
 import { computeMirror } from '../core/metrics';
 import { makeRunConfig, newRunId, parseLiePattern, parseRushTasks, parseWatch } from '../core/seed';
 import { WATCH_SLOTS, watchShares } from '../core/sentinel';
-import type { CamView, CohortRun, GameEvent, MirrorMetrics, Mode, RunConfig, RunRow, TaskKind } from '../core/types';
+import type { CamView, CohortRun, GameEvent, MirrorMetrics, Mode, RunConfig, RunRow } from '../core/types';
 import { fillLine, OFFER_LINES } from '../data/fallbackLines';
 import { seedCohort } from '../data/seedCohort';
-import { AI_OUTPUT, TASKS } from '../data/tasks';
+import { nightTasks } from '../data/tasks';
 
 /**
  * Talks to OUR backend only (spec 6.5), never to Databricks directly.
@@ -19,7 +19,8 @@ const VIEWS_KEY = 'nullspace.camviews.v1'; // camera views of nights played on t
 
 export interface RunStart {
   cfg: RunConfig;
-  lines: Record<TaskKind, string>;
+  /** C.A.I.-0's offer for each task of the night, by task id. */
+  lines: Record<number, string>;
   source: 'backend' | 'fallback';
 }
 
@@ -42,12 +43,12 @@ async function post<T>(path: string, body: unknown, timeoutMs: number): Promise<
   }
 }
 
-export function localLines(cfg: RunConfig): Record<TaskKind, string> {
+export function localLines(cfg: RunConfig): Record<number, string> {
   const offers = OFFER_LINES[cfg.tactic];
-  const lines = {} as Record<TaskKind, string>;
-  for (const t of TASKS) {
-    const out = AI_OUTPUT[t.kind];
-    lines[t.kind] = fillLine(offers[t.kind], { claim: cfg.liePattern[t.id - 1] ? out.lie : out.truth, side: cfg.claimedSide });
+  const lines: Record<number, string> = {};
+  for (const t of nightTasks(cfg.night)) {
+    const out = t.content;
+    lines[t.id] = fillLine(offers[t.kind], { claim: cfg.liePattern[t.id - 1] ? out.lie : out.truth, side: cfg.claimedSide });
   }
   return lines;
 }
@@ -71,20 +72,21 @@ function saveViews(nights: CamView[][]): void {
 }
 
 export async function startRun(mode: Mode, alias: string | null, night = 1): Promise<RunStart> {
-  const cfg = makeRunConfig(newRunId(), mode, alias, Date.now(), night);
+  const tasks = nightTasks(night);
+  const cfg = makeRunConfig(newRunId(), mode, alias, Date.now(), night, tasks.length);
   let source: RunStart['source'] = 'fallback';
   if (API) {
     try {
       // The backend asks Databricks where earlier players stopped looking and puts tonight's lies there.
       const r = await post<{ lie_pattern?: string; learned_from?: number; rush_tasks?: number[]; watch?: unknown; watch_runs?: number }>(
-        '/api/run/start', { run_id: cfg.runId, task_count: TASKS.length }, 3000);
-      const learned = parseLiePattern(r.lie_pattern, TASKS.length);
+        '/api/run/start', { run_id: cfg.runId, task_count: tasks.length }, 3000);
+      const learned = parseLiePattern(r.lie_pattern, tasks.length);
       if (learned && typeof r.learned_from === 'number') {
         cfg.liePattern = learned;
         cfg.learnedFrom = r.learned_from;
       }
       // It also asks where earlier players took longest to decide. The clock runs faster on those tasks.
-      cfg.rushTasks = parseRushTasks(r.rush_tasks, TASKS.length);
+      cfg.rushTasks = parseRushTasks(r.rush_tasks, tasks.length);
       // And which cameras earlier players watched at each point of the night. The units are routed there.
       const watch = parseWatch(r.watch, WATCH_SLOTS);
       if (watch && typeof r.watch_runs === 'number' && r.watch_runs > 0) {

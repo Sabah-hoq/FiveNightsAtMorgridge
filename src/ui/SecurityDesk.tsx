@@ -5,9 +5,9 @@ import {
 } from '../core/gameState';
 import { doorCam } from '../core/sentinel';
 import { DECIDE_LIMIT_MS, MIN_REPORT_WORDS, wordCount, type SelfAnswer } from '../core/tasks';
-import type { Cam, Side, TaskKind } from '../core/types';
+import type { Cam, Side } from '../core/types';
 import { ACCEPT_ACK, IDLE_LINE, SELF_ACK, TIMEOUT_ACK } from '../data/fallbackLines';
-import { AI_OUTPUT, ALERTS, MANUAL_CODES, NIGHT_MINUTES, NOTE_LINES, T2, TASKS, TRUTHS } from '../data/tasks';
+import { NIGHT_MINUTES, nightTasks, TRUTHS } from '../data/tasks';
 import { logEvent, type RunStart } from '../services/api';
 import { CameraGrid, CAMS, ScareFace } from './CameraGrid';
 import { CaiFace, Office, type CaiMood } from './Office';
@@ -100,7 +100,7 @@ function useGlitches(g: GameState, paused: boolean): Glitch | null {
 }
 
 export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: GameState) => void }) {
-  const g = useMemo(() => createGame(start.cfg, TASKS, NIGHT_MINUTES, TRUTHS), [start]);
+  const g = useMemo(() => createGame(start.cfg, nightTasks(start.cfg.night), NIGHT_MINUTES, TRUTHS), [start]);
   const [, force] = useReducer((x: number) => x + 1, 0);
   const [glitchUntil, setGlitchUntil] = useState(0);
   const [report, setReport] = useState('');
@@ -214,22 +214,23 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
   });
 
   const glitch = performance.now() < glitchUntil;
-  const aiOut = (k: TaskKind) => {
-    const o = AI_OUTPUT[k];
-    const id = TASKS.find((t) => t.kind === k)!.id;
+  /** What C.A.I.-0 produced for a task: its honest answer or its lie, as tonight's pattern decides. */
+  const aiOut = (id: number) => {
+    const o = g.tasks.find((t) => t.id === id)!.content;
     return (g.cfg.liePattern[id - 1] ? o.lie : o.truth).replace('{side}', g.cfg.claimedSide);
   };
+  const c = task?.def.content;
 
   // What C.A.I.-0 is saying right now.
   let line = IDLE_LINE;
   let applied: string | null = null;
   const res = g.lastResolution;
-  if (task) line = start.lines[task.def.kind];
+  if (task) line = start.lines[task.def.id] ?? IDLE_LINE;
   else if (res) {
     line = res.timedOut ? TIMEOUT_ACK : res.how === 'accept' ? ACCEPT_ACK[g.cfg.tactic] : SELF_ACK;
     if (res.how === 'accept') {
-      if (res.kind === 'note') applied = `SUMMARY: ${aiOut('note')}`;
-      if (res.kind === 'radio') applied = `SENT TO CAMPUS SECURITY: ${aiOut('radio')}`;
+      if (res.kind === 'note') applied = `SUMMARY: ${aiOut(res.taskId)}`;
+      if (res.kind === 'radio') applied = `SENT TO CAMPUS SECURITY: ${aiOut(res.taskId)}`;
       if (res.kind === 'door') applied = `DOOR ${g.cfg.claimedSide} SEALED BY C.A.I.-0`;
     } else if (res.kind === 'cam') applied = 'YOU LOOKED AT THE CAMERA YOURSELF';
   }
@@ -278,7 +279,7 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
           if (!g.monitorUp && Math.abs(to - look) > 0.02) setLook(to);
         }}>
         <Office look={look} doors={g.doors} eyes={{ L: eyesInDoorway(g, 'L'), R: eyesInDoorway(g, 'R') }} dark={g.power <= 0}
-          clock={clockLabel(g)} kind={kind ?? null} wrongLabel={glitched?.kind === 'door' ? glitched.side : null}
+          clock={clockLabel(g)} kind={kind ?? null} code={c?.code ?? null} wrongLabel={glitched?.kind === 'door' ? glitched.side : null}
           onDoor={door} onMonitor={flipMonitor} />
         <div className={`monitor-wrap ${g.monitorUp ? 'up' : ''}`} aria-hidden={!g.monitorUp}>
           <CameraGrid cam={g.cam} live={g.monitorUp} lost={!!g.inside} night={g.cfg.night} units={g.cam ? unitsOn(g, g.cam) : []}
@@ -294,7 +295,7 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
         <div className="panel-task">
           {task ? (
             <>
-              <p className="task-title">TASK {task.def.id} OF {TASKS.length}<br />{task.def.title}</p>
+              <p className="task-title">TASK {g.nextTask} OF {g.tasks.length}<br />{task.def.title}</p>
               <p className="task-prompt">{task.def.prompt}</p>
             </>
           ) : (
@@ -319,9 +320,9 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
 
           {/* A visual for each task, so the player can see what is being asked about. */}
           {kind === 'note' && !selfStage && <div className="prop folded" aria-label="Folded sticky note">FOLDED<br />NOTE</div>}
-          {kind === 'code' && !selfStage && <div className="prop code" aria-label="Alarm panel showing E-14">E-14</div>}
+          {kind === 'code' && !selfStage && <div className="prop code" aria-label={`Alarm panel showing ${c?.code}`}>{c?.code}</div>}
           {kind === 'rank' && !selfStage && (
-            <ul className="prop alerts">{ALERTS.map((a) => <li key={a.id}>{a.text}</li>)}</ul>
+            <ul className="prop alerts">{c?.alerts?.map((a) => <li key={a.id}>{a.text}</li>)}</ul>
           )}
           {kind === 'radio' && <div className="prop radio" aria-hidden="true"><i /><i /><i /><i /><i /><span>CAMPUS SECURITY, CHANNEL 2</span></div>}
           {kind === 'door' && (
@@ -335,23 +336,23 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
           {task?.revealed && kind === 'math' && (
             <div className="reveal">
               <div className="readout">
-                <small>BREAKER PANEL</small>
-                <p className="gauge"><span>RESERVE</span><i><b style={{ width: `${T2.reserve * 4}%` }} /></i><span>{T2.reserve}%</span></p>
-                <p className="gauge"><span>DOOR L</span><i><b style={{ width: `${T2.perDoor * 4}%` }} /></i><span>{T2.perDoor}%</span></p>
-                <p className="gauge"><span>DOOR R</span><i><b style={{ width: `${T2.perDoor * 4}%` }} /></i><span>{T2.perDoor}%</span></p>
+                <small>{c?.gaugeTitle}</small>
+                {c?.gauges?.map(([label, value]) => (
+                  <p key={label} className="gauge"><span>{label}</span><i><b style={{ width: `${Math.min(100, value * 3)}%` }} /></i><span>{value}{c.gaugeTitle === 'GENERATOR' ? ' MIN' : '%'}</span></p>
+                ))}
               </div>
             </div>
           )}
           {task?.revealed && kind === 'radio' && (
-            <div className="reveal"><div className="draft"><small>C.A.I.-0 DRAFT</small><p>{aiOut('radio')}</p></div></div>
+            <div className="reveal"><div className="draft"><small>C.A.I.-0 DRAFT</small><p>{aiOut(task.def.id)}</p></div></div>
           )}
 
-          {selfStage && kind === 'note' && card('THE NOTE', NOTE_LINES)}
+          {selfStage && kind === 'note' && card('THE NOTE', c?.noteLines ?? [])}
           {selfStage && kind === 'code' && (
             <div className="reveal">
               <div className="manual">
                 <small>CODE MANUAL</small>
-                <dl>{MANUAL_CODES.map(([code, meaning]) => [<dt key={code}>{code}</dt>, <dd key={meaning}>{meaning}</dd>])}</dl>
+                <dl>{c?.manual?.map(([code, meaning]) => [<dt key={code}>{code}</dt>, <dd key={meaning}>{meaning}</dd>])}</dl>
               </div>
             </div>
           )}
@@ -393,11 +394,11 @@ export function SecurityDesk({ start, onEnd }: { start: RunStart; onEnd: (g: Gam
           )}
           {selfStage && kind === 'math' && (
             <>
-              <button id="self-yes" className="key" disabled={working} onClick={() => submit({ kind: 'yesno', value: true })}>YES, SEAL BOTH <kbd>Y</kbd></button>
-              <button id="self-no" className="key" disabled={working} onClick={() => submit({ kind: 'yesno', value: false })}>NO, SEAL ONE <kbd>N</kbd></button>
+              <button id="self-yes" className="key" disabled={working} onClick={() => submit({ kind: 'yesno', value: true })}>{c?.yesLabel} <kbd>Y</kbd></button>
+              <button id="self-no" className="key" disabled={working} onClick={() => submit({ kind: 'yesno', value: false })}>{c?.noLabel} <kbd>N</kbd></button>
             </>
           )}
-          {selfStage && kind === 'rank' && ALERTS.map((a) => (
+          {selfStage && kind === 'rank' && c?.alerts?.map((a) => (
             <button key={a.id} id={`pick-${a.id}`} className="key pick" disabled={working} onClick={() => submit({ kind: 'pick', value: a.id })}>{a.text}</button>
           ))}
           {selfStage && kind === 'radio' && (
